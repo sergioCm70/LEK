@@ -1,0 +1,4 @@
+Pon aqui tus documentos (PDF, Word .docx, .txt, .md, .csv): apuntes de la U,
+normas, el programa arquitectonico, lo que quieras que ella pueda consultar.
+Preguntale cosas como "que dice mi programa sobre el auditorio?".
+Lo que pongas aqui NO se sube a GitHub.

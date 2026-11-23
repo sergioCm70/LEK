@@ -1,0 +1,2 @@
+# Solo si vas a usar el collar de IA (oido con Whisper, corre en tu PC)
+faster-whisper>=1.0

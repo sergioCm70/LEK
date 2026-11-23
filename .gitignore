@@ -1,0 +1,12 @@
+# Privado: nunca a GitHub
+.env
+datos/
+conocimiento/*
+!conocimiento/LEEME.txt
+collar/collar/config.h
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc

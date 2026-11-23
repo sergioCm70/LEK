@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05080f">
+<title>Asistente</title>
+<style>
+  :root { --fondo:#05080f; --panel:#0c1322; --linea:#16233b; --cian:#4fd8ff; --cian2:#1b8fd1; --texto:#dbe7f5; --tenue:#7d8ca3; --ambar:#ffb547; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; }
+  body { background:radial-gradient(ellipse at 50% 0%, #0d1a30 0%, var(--fondo) 60%); color:var(--texto);
+         font-family:"Segoe UI", system-ui, -apple-system, sans-serif; display:flex; flex-direction:column; }
+  header { text-align:center; padding:18px 12px 4px; letter-spacing:.45em; font-weight:300; font-size:1.05rem; color:var(--cian); }
+  #estado { text-align:center; color:var(--tenue); font-size:.85rem; min-height:1.2em; letter-spacing:.05em; }
+
+  #zona { display:flex; justify-content:center; padding:18px 0 10px; }
+  #nucleo { position:relative; width:150px; height:150px; border-radius:50%; border:none; cursor:pointer; background:none; -webkit-tap-highlight-color:transparent; }
+  #nucleo .anillo { position:absolute; inset:0; border-radius:50%; border:2px solid var(--cian2); opacity:.55; }
+  #nucleo .a2 { inset:14px; border:2px dashed var(--cian); opacity:.5; animation:giro 14s linear infinite; }
+  #nucleo .a3 { inset:30px; border:1px solid var(--cian); opacity:.35; animation:giro 9s linear infinite reverse; }
+  #nucleo .centro { position:absolute; inset:48px; border-radius:50%; background:radial-gradient(circle, #e8fbff 0%, var(--cian) 35%, var(--cian2) 70%, transparent 72%);
+                    box-shadow:0 0 30px var(--cian), 0 0 70px #1b8fd155; transition:transform .3s; }
+  #nucleo.escuchando .centro { animation:latido 1s ease-in-out infinite; }
+  #nucleo.escuchando .a2 { animation-duration:3s; }
+  #nucleo.pensando .a2, #nucleo.pensando .a3 { animation-duration:1.2s; }
+  #nucleo.pensando .centro { background:radial-gradient(circle, #fff6e0 0%, var(--ambar) 35%, #c77a12 70%, transparent 72%); box-shadow:0 0 30px var(--ambar); }
+  #nucleo.hablando .centro { animation:latido .45s ease-in-out infinite; }
+  @keyframes giro { to { transform:rotate(360deg); } }
+  @keyframes latido { 50% { transform:scale(1.15); } }
+
+  #chat { flex:1; overflow-y:auto; padding:10px 14px; display:flex; flex-direction:column; gap:8px; max-width:720px; width:100%; margin:0 auto; }
+  .b { max-width:85%; padding:9px 13px; border-radius:14px; line-height:1.4; font-size:.95rem; white-space:pre-wrap; word-wrap:break-word; }
+  .u { align-self:flex-end; background:var(--cian2); color:#fff; border-bottom-right-radius:4px; }
+  .j { align-self:flex-start; background:var(--panel); border:1px solid var(--linea); border-bottom-left-radius:4px; }
+
+  footer { padding:10px 14px calc(12px + env(safe-area-inset-bottom)); max-width:720px; width:100%; margin:0 auto; }
+  form { display:flex; gap:8px; }
+  input[type=text] { flex:1; background:var(--panel); border:1px solid var(--linea); color:var(--texto); border-radius:12px; padding:11px 13px; font-size:1rem; outline:none; }
+  input[type=text]:focus { border-color:var(--cian2); }
+  button.enviar { background:var(--cian2); color:#fff; border:none; border-radius:12px; padding:0 16px; font-size:1rem; cursor:pointer; }
+  .opciones { display:flex; justify-content:space-between; align-items:center; margin-top:9px; font-size:.82rem; color:var(--tenue); }
+  .opciones label { display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .opciones a { color:var(--tenue); cursor:pointer; text-decoration:underline; }
+</style>
+</head>
+<body>
+<header id="titulo">· · ·</header>
+<div id="estado">Conectando…</div>
+<div id="zona">
+  <button id="nucleo" aria-label="Hablar">
+    <span class="anillo"></span><span class="anillo a2"></span><span class="anillo a3"></span><span class="centro"></span>
+  </button>
+</div>
+<div id="chat"></div>
+<footer>
+  <form id="formulario">
+    <input id="entrada" type="text" placeholder="Escribe o toca el núcleo para hablar" autocomplete="off">
+    <button class="enviar" type="submit">➤</button>
+  </form>
+  <div class="opciones">
+    <label><input type="checkbox" id="manos"> <span id="manosTexto">Manos libres (di su nombre)</span></label>
+    <span><label style="display:inline-flex"><input type="checkbox" id="voz" checked> Voz</label> · <a id="nueva">Nueva conversación</a></span>
+  </div>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const guardar = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+const leer = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+
+let pin = leer("pin") || "";
+let cliente = leer("cliente");
+if (!cliente) { cliente = Math.random().toString(36).slice(2, 12); guardar("cliente", cliente); }
+let nombre = "";
+
+// ------------------------------------------------------------ servidor
+async function api(ruta, cuerpo) {
+  const r = await fetch(ruta, {
+    method: cuerpo ? "POST" : "GET",
+    headers: { "Content-Type": "application/json", "X-Asistente-Pin": pin },
+    body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+  });
+  if (r.status === 401) {
+    const p = prompt("PIN del asistente:");
+    if (p === null) throw new Error("sin PIN");
+    pin = p.trim(); guardar("pin", pin);
+    return api(ruta, cuerpo);
+  }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ------------------------------------------------------------ interfaz
+function estado(texto, clase = "") {
+  $("estado").textContent = texto;
+  $("nucleo").className = clase;
+}
+function burbuja(texto, quien) {
+  const d = document.createElement("div");
+  d.className = "b " + quien; d.textContent = texto;
+  $("chat").appendChild(d); $("chat").scrollTop = $("chat").scrollHeight;
+}
+function ponerNombre(n) {
+  nombre = n || "Asistente";
+  document.title = nombre;
+  $("titulo").textContent = nombre.toUpperCase().split("").join(" ");
+  $("manosTexto").textContent = `Manos libres (di "${nombre}")`;
+}
+function reposo() {
+  if (continuo) estado(`Di "${nombre}…"`); else estado("Toca el núcleo para hablar");
+}
+
+// ------------------------------------------------------------ voz (hablar)
+let vozES = null;
+function elegirVoz() {
+  const vs = speechSynthesis.getVoices().filter(v => v.lang && v.lang.toLowerCase().startsWith("es"));
+  const mujer = /helena|sabina|laura|elvira|paloma|dalia|salome|salomé|paulina|m[oó]nica|luc[ií]a|elena|ximena|camila|female|mujer|google/i;
+  const buena = /natural|online|neural|premium|enhanced/i;
+  vozES = vs.find(v => mujer.test(v.name) && buena.test(v.name))
+       || vs.find(v => mujer.test(v.name) && /CO|419|MX|US/.test(v.lang))
+       || vs.find(v => mujer.test(v.name)) || vs.find(v => buena.test(v.name)) || vs[0] || null;
+}
+if ("speechSynthesis" in window) { elegirVoz(); speechSynthesis.onvoiceschanged = elegirVoz; }
+
+function decir(texto) {
+  return new Promise(listo => {
+    if (!$("voz").checked || !("speechSynthesis" in window)) return listo();
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(texto);
+    u.lang = vozES ? vozES.lang : "es-CO";
+    if (vozES) u.voice = vozES;
+    u.rate = 1.05; u.pitch = 1.05;
+    let terminado = false;
+    const fin = () => { if (!terminado) { terminado = true; listo(); } };
+    u.onend = fin; u.onerror = fin;
+    setTimeout(fin, 4000 + texto.length * 90);  // por si el navegador nunca avisa
+    estado("Hablando", "hablando");
+    speechSynthesis.speak(u);
+  });
+}
+
+// ------------------------------------------------------------ oído (escuchar)
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, continuo = false, escuchando = false, ocupado = false;
+
+function crearReconocedor() {
+  if (!SR) return null;
+  const r = new SR();
+  r.lang = "es-CO"; r.interimResults = false; r.maxAlternatives = 1; r.continuous = continuo;
+  r.onstart = () => { escuchando = true; continuo ? estado(`Di "${nombre}…"`) : estado("Escuchando…", "escuchando"); };
+  r.onresult = e => {
+    const t = e.results[e.results.length - 1][0].transcript.trim();
+    if (!t) return;
+    if (!continuo) { enviar(t); return; }
+    const p = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const n = p(nombre), tp = p(t), i = tp.indexOf(n);
+    if (n && i !== -1 && i < 15) {
+      r.stop();
+      enviar(t.slice(i + n.length).replace(/^[\s,.:!¡¿?]+/, "") || "Hola");
+    }
+  };
+  r.onerror = e => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      continuo = false; $("manos").checked = false;
+      estado("Dale permiso al micrófono en el navegador");
+    }
+  };
+  r.onend = () => {
+    escuchando = false;
+    if (continuo && !ocupado) setTimeout(escuchar, 300);
+    else if (!ocupado) reposo();
+  };
+  return r;
+}
+function escuchar() {
+  if (!SR) { estado("Este navegador no reconoce voz: usa Chrome o Edge, o escribe"); return; }
+  if (escuchando || ocupado) return;
+  rec = crearReconocedor();
+  try { rec.start(); } catch (e) {}
+}
+function dejarDeEscuchar() { if (rec && escuchando) { try { rec.abort(); } catch (e) {} } }
+
+// ------------------------------------------------------------ conversación
+async function enviar(texto) {
+  texto = texto.trim(); if (!texto || ocupado) return;
+  ocupado = true; dejarDeEscuchar();
+  burbuja(texto, "u");
+  estado("Pensando…", "pensando");
+  try {
+    const d = await api("/api/chat", { texto, cliente });
+    if (d.asistente && d.asistente !== nombre) ponerNombre(d.asistente);
+    burbuja(d.respuesta, "j");
+    await decir(d.respuesta);
+  } catch (e) {
+    burbuja("No logro conectarme con el PC. ¿Está encendido el programa?", "j");
+  } finally {
+    ocupado = false;
+    if (continuo) escuchar(); else reposo();
+  }
+}
+
+$("nucleo").onclick = () => {
+  if ("speechSynthesis" in window && speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
+  if (continuo) return;
+  escuchando ? dejarDeEscuchar() : escuchar();
+};
+$("formulario").onsubmit = e => { e.preventDefault(); const t = $("entrada").value; $("entrada").value = ""; enviar(t); };
+$("manos").onchange = () => {
+  continuo = $("manos").checked;
+  dejarDeEscuchar();
+  if (continuo) setTimeout(escuchar, 300); else reposo();
+};
+$("nueva").onclick = async () => {
+  try { await api("/api/reiniciar", { texto: "-", cliente }); } catch (e) {}
+  $("chat").innerHTML = ""; burbuja("Empecemos de nuevo. ¿Qué necesitas?", "j");
+};
+
+api("/api/ping").then(d => {
+  ponerNombre(d.asistente);
+  burbuja(`Hola${d.usuario ? ", " + d.usuario : ""}, soy ${d.asistente}. ¿En qué te ayudo?`, "j");
+  reposo();
+}).catch(() => estado("Sin conexión con el PC"));
+</script>
+</body>
+</html>
