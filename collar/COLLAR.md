@@ -45,7 +45,7 @@ El micrófono ya viene en la placa de expansión Sense, así que no hay que cone
 
 ## En el PC
 
-- Al instalar, responde **s** cuando `instalar.bat` pregunte por el collar (eso instala Whisper, el oído).
+- Abre **`instalar_collar.bat`** (instala Whisper, el oído del collar).
 - La primera vez que hables, el PC descarga el modelo de Whisper (unos 500 MB con `small`).
 - La voz usa las voces de Windows. Para que suene en español: *Configuración → Hora e idioma → Voz → Agregar voces* → Español (México o España).
 - El PC y el collar deben estar en la misma Wi-Fi. Para usarlo fuera de casa, mira la sección Tailscale del README (el collar necesitaría un hotspot de tu celular).

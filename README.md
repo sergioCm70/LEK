@@ -25,7 +25,7 @@ Una asistente por voz tipo "Jarvis" que vive en tu PC. Le hablas desde el PC o e
    git clone https://github.com/sergioCm70/LEK.git
    ```
    Si no quieres instalar Git, en GitHub usa el botón verde **Code → Download ZIP** y descomprímelo.
-5. Entra a la carpeta `LEK` y abre **`instalar.bat`**. Él instala todo y descarga el cerebro (varios GB, puede tardar).
+5. Entra a la carpeta `LEK` y abre **`instalar.bat`**. Él instala lo que falte (Python y Ollama, con winget) y descarga el cerebro (varios GB, puede tardar).
 6. Abre el archivo **`.env`** con el Bloc de notas y ponle un **PIN**.
 
 > **¿Tu PC es justo de RAM?** `qwen3:8b` necesita unos 8 GB libres. Si va lento, cambia en `.env` a `ASISTENTE_MODELO=qwen3:4b` y ejecuta `ollama pull qwen3:4b`.
