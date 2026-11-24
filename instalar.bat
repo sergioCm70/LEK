@@ -5,16 +5,27 @@ title Instalar asistente
 echo.
 echo  === Instalando tu asistente ===
 echo.
-where python >nul 2>nul
-if errorlevel 1 (
-  echo  No encuentro Python. Instalalo desde https://www.python.org/downloads/
-  echo  y marca la casilla "Add python.exe to PATH". Luego vuelve a abrir este archivo.
+set PY=
+python -c "import sys" >nul 2>nul && set PY=python
+if not defined PY py -3 -c "import sys" >nul 2>nul && set PY=py -3
+if not defined PY (
+  echo  No encuentro Python instalado.
+  echo  1. Descargalo de https://www.python.org/downloads/
+  echo  2. En la PRIMERA pantalla del instalador marca "Add python.exe to PATH"
+  echo  3. Cierra esta ventana y vuelve a abrir instalar.bat
+  start https://www.python.org/downloads/
   pause
   exit /b 1
 )
+if exist venv if not exist venv\Scripts\activate.bat rmdir /s /q venv
 if not exist venv (
   echo  Creando entorno de Python...
-  python -m venv venv
+  %PY% -m venv venv
+)
+if not exist venv\Scripts\activate.bat (
+  echo  No se pudo crear el entorno de Python. Reinstala Python desde python.org.
+  pause
+  exit /b 1
 )
 call venv\Scripts\activate.bat
 python -m pip install --upgrade pip >nul
