@@ -10,3 +10,6 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+
+# Habilidades que Luna propone (se suben solo cuando las apruebas)
+habilidades/propuestas/

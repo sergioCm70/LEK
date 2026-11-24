@@ -9,6 +9,7 @@ Una asistente por voz tipo "Jarvis" que vive en tu PC. Le hablas desde el PC o e
 - **Tu PC:** abre programas (Revit, AutoCAD, Word…) y páginas web.
 - **Notas:** "anota que tengo que comprar balso".
 - **Manos libres:** di su nombre y te escucha.
+- **Se mejora sola (LEK):** cuando le falta algo, ella misma escribe una habilidad nueva; tú la apruebas con un botón.
 - **Collar de IA** opcional: un dije con micrófono y parlante ([collar/COLLAR.md](collar/COLLAR.md)).
 
 ---
@@ -59,6 +60,22 @@ Abre **`iniciar.bat`**. La primera vez verás algo así:
 
 Tus datos personales (memoria, notas, nombre que eligió, certificados) quedan en la carpeta `datos/`, y tus documentos en `conocimiento/`. **Ninguna de las dos se sube a GitHub**, igual que el archivo `.env`.
 
+## LEK: Luna se mejora sola
+
+Pídele algo que todavía no sepa hacer ("crea una habilidad para convertir pulgadas a centímetros"), o deja que ella lo note sola. Entonces:
+
+1. Ella **escribe la habilidad** en Python y la deja **esperando tu aprobación**.
+2. Toca **Habilidades** (abajo en la pantalla), lee qué hace y, si quieres, el código.
+3. Toca **Aprobar** y desde ese momento ella la usa. Puedes **Desactivar** cualquiera cuando quieras.
+
+Si una habilidad borra archivos, ejecuta programas o toca tus ajustes, aparece un aviso ⚠. No apruebes nada que no entiendas: el código aprobado corre en tu PC.
+
+Por seguridad, sin PIN solo se puede aprobar desde el mismo PC, no desde el celular.
+
+Las mejoras grandes que ella quiere para sí misma quedan anotadas en la sección **Ideas** de esa misma pantalla, para programarlas después.
+
+Ya trae tres habilidades: **escala de maqueta** ("¿cuánto miden 12 metros a escala 1:100?"), **clima** y **días que faltan** para una fecha.
+
 ## Actualizar
 
 Cuando haya cambios en GitHub, abre **`actualizar.bat`**. Tu memoria y tus notas no se tocan.
@@ -80,6 +97,7 @@ Instala **Tailscale** (gratis) en el PC y en el celular, con la misma cuenta. En
 servidor.py          el cerebro: conversación, herramientas, memoria
 static/index.html    la cara: núcleo, voz y chat
 programas.json       programas que puede abrir
+habilidades/         habilidades aprobadas (y propuestas/ las que esperan)
 conocimiento/        tus documentos (privado)
 datos/               su memoria, notas y nombre (privado, se crea solo)
 collar/              firmware y guía del collar de IA
