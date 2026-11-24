@@ -42,11 +42,22 @@ echo.
 echo.
 echo  Instalando Whisper para entenderte mejor (opcional, si falla Luna usa Vosk)...
 python -m pip install faster-whisper
+if not errorlevel 1 goto whisper_listo
+echo  Plan B: Whisper sin PyAV (Luna le pasa el audio ya decodificado)...
+python -m pip install --no-deps faster-whisper
+python -m pip install ctranslate2 tokenizers huggingface_hub tqdm numpy
+python -m pip install onnxruntime >nul 2>&1
+python -c "import ctranslate2, tokenizers, numpy, faster_whisper" >nul 2>&1
+if errorlevel 1 (
+  python -c "import sys, types; sys.modules['av'] = types.ModuleType('av'); import faster_whisper" >nul 2>&1
+)
 if errorlevel 1 (
   echo  Whisper no se pudo instalar en esta version de Python. Luna seguira entendiendote con Vosk.
-) else (
-  echo  Whisper listo: la primera vez que le hables descargara su modelo, unos 500 MB.
+  goto whisper_fin
 )
+:whisper_listo
+echo  Whisper listo: la primera vez que le hables descargara su modelo, unos 500 MB.
+:whisper_fin
 echo.
 python -c "from lek.voz.despertador import diagnosticar; d = diagnosticar(); print('  Todo listo.' if d['listo'] else '  Falta: ' + ' '.join(d['faltan']))"
 echo.

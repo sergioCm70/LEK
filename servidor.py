@@ -25,6 +25,7 @@ import ast
 import asyncio
 import shutil
 import importlib.util
+import sys
 
 import requests
 from dotenv import load_dotenv
@@ -1082,6 +1083,11 @@ def cargar_whisper():
     global _whisper
     with _candado_whisper:
         if _whisper is None:
+            if importlib.util.find_spec("av") is None:
+                # Python 3.15 aún no tiene PyAV; faster-whisper solo lo usa para abrir archivos de audio,
+                # y aquí le pasamos el audio ya decodificado, así que basta un módulo vacío.
+                import types
+                sys.modules.setdefault("av", types.ModuleType("av"))
             from faster_whisper import WhisperModel
             modelo = WHISPER_MODELO
             try:  # con la RAM casi llena (Revit abierto), un modelo más liviano para no ahogar el PC
@@ -1097,9 +1103,28 @@ def cargar_whisper():
     return _whisper
 
 
+def leer_wav_16k(ruta_wav: str):
+    """WAV de 16 bits -> audio float32 mono a 16 kHz (lo que Whisper espera), sin depender de PyAV."""
+    import wave
+    import numpy as np
+    with wave.open(str(ruta_wav), "rb") as w:
+        canales, ancho, tasa = w.getnchannels(), w.getsampwidth(), w.getframerate()
+        crudo = w.readframes(w.getnframes())
+    if ancho != 2:
+        raise ValueError("El audio debe ser WAV de 16 bits")
+    audio = np.frombuffer(crudo, dtype="<i2").astype(np.float32) / 32768.0
+    if canales > 1:
+        audio = audio.reshape(-1, canales).mean(axis=1)
+    if tasa != 16000 and len(audio):
+        n = int(len(audio) * 16000 / tasa)
+        audio = np.interp(np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio).astype(np.float32)
+    return audio
+
+
 def transcribir(ruta_wav: str, pista: str = "") -> str:
-    segmentos, _ = cargar_whisper().transcribe(ruta_wav, language="es", vad_filter=True,
-                                       initial_prompt=pista or None, beam_size=5)
+    segmentos, _ = cargar_whisper().transcribe(
+        leer_wav_16k(ruta_wav), language="es", initial_prompt=pista or None, beam_size=5,
+        vad_filter=importlib.util.find_spec("onnxruntime") is not None)
     return " ".join(s.text.strip() for s in segmentos).strip()
 
 
@@ -1112,7 +1137,7 @@ def usar_whisper_en_voz() -> bool:
     """Whisper entiende mucho mejor que Vosk; se usa si está instalado (DESPERTADOR_WHISPER=no lo apaga)."""
     if os.getenv("DESPERTADOR_WHISPER", "auto").strip().lower() in ("no", "0", "false"):
         return False
-    return importlib.util.find_spec("faster_whisper") is not None
+    return all(importlib.util.find_spec(m) is not None for m in ("faster_whisper", "ctranslate2", "numpy"))
 
 
 PS_VOZ = r"""
