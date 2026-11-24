@@ -88,6 +88,15 @@ Estado real (auditoría del 24 de noviembre de 2026): verificado en el PC el cer
 
 ---
 
+## Estado al 24 de noviembre de 2026: fase 2 integrada (pruebas automáticas, falta verificar en el PC)
+- **Enrutador automático** (modo "auto"): clasifica cada pedido en simple, normal, compleja o privada y elige modelo con tope de gasto. Precisión medida en pedidos nuevos: ~80 %.
+- **Memoria por significado** (embeddings locales con Ollama, `nomic-embed-text`) sobre todas las conversaciones; si no hay modelo, sigue por palabras.
+- **Automejora segura:** análisis estático + prueba aislada con EJEMPLOS; lo de bajo riesgo se activa solo y SIEMPRE se notifica con el código.
+- **Proyectos persistentes** (objetivos → plan → tareas) que avanzan cuando el PC está libre; nivel 2 siempre pide permiso.
+- **Organizador de archivos** (Descargas/Escritorio), sin borrar, sin tocar Revit/CAD, con deshacer.
+- **Análisis exacto** de PDF, Word, Excel/CSV, imágenes y GLB (avanza la etapa 5).
+- **Voz en segundo plano** ("Luna" sin abrir nada, Vosk local), **pulso del Apple Watch** (solo local), **monitor del PC**, **notificaciones** y **autoevaluación** con banco de 30 casos (avanza la etapa 7).
+
 ## Descartado por ahora
 - Ajuste fino temprano: cuesta mucho y la memoria más los documentos dan casi lo mismo.
 - Control total del PC sin permisos: va contra el nivel 3.

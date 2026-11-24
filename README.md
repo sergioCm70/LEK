@@ -10,6 +10,14 @@ Una asistente por voz tipo "Jarvis" que vive en tu PC. Le hablas desde el PC o e
 - **Notas:** "anota que tengo que comprar balso".
 - **Manos libres:** di su nombre y te escucha.
 - **Se mejora sola (LEK):** cuando le falta algo, ella misma escribe una habilidad nueva; tú la apruebas con un botón.
+- **Sin abrir nada:** con `instalar_voz.bat`, di "Luna" en cualquier momento y te escucha en segundo plano (todo local).
+- **Elige su cerebro sola:** preguntas simples al más rápido, complejas al más inteligente (con tope de gasto), privadas solo en tu PC.
+- **Nunca olvida:** todas las conversaciones quedan en tu PC y las busca por significado, no solo por palabras.
+- **Analiza archivos con números exactos:** PDF, Word, Excel/CSV (cuadros de áreas), imágenes y modelos GLB.
+- **Ordena tus archivos:** Descargas y Escritorio, sin borrar nada, sin tocar Revit/CAD, y todo se puede deshacer.
+- **Proyectos:** le das un objetivo, propone el plan, tú lo apruebas y ella avanza cuando el PC está libre.
+- **Pulso del Apple Watch** (vía iPhone): [luna/ATAJO_APPLE_WATCH.md](luna/ATAJO_APPLE_WATCH.md). Solo en tu PC.
+- **Transparente:** cada cosa que hace sola (código, archivos, programas) aparece en Notificaciones, con el código completo.
 - **Collar de IA** opcional: un dije con micrófono y parlante ([collar/COLLAR.md](collar/COLLAR.md)).
 
 ---

@@ -11,7 +11,7 @@ import threading
 POR_DEFECTO = {
     "version": 1,
     "cerebro": {
-        "modo": "fijo",                       # "fijo" hoy; "auto" llega con el enrutador (fase 2)
+        "modo": "auto",                       # "auto": el enrutador elige el modelo según la pregunta
         "principal": "claude-haiku-5-5",      # se usa si hay clave de Claude
         "respaldo": "",                       # vacío = el modelo local de .env
         "presupuesto_mensual_usd": 5.0,

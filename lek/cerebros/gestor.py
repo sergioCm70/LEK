@@ -38,6 +38,7 @@ class Cerebro:
         self.ultimo = {"modelo": "", "proveedor": "", "motivo": "", "degradado": False, "aviso": ""}
         self.esperar = time.sleep            # reemplazable en las pruebas
         self._aviso_cadena = ""
+        self.ultima_eleccion = {}
 
     # ---------------------------------------------------------------- elección
     def ubicacion(self, modelo: str) -> str:
@@ -46,7 +47,17 @@ class Cerebro:
     def respaldo(self) -> str:
         return self.config.get("cerebro", "respaldo") or self.modelo_local
 
-    def cadena(self, privado: bool = False) -> list:
+    def cadena(self, privado: bool = False, texto: str = "") -> list:
+        """Puerta de entrada: sin texto, la cadena de siempre; con texto, el enrutador decide (modo auto)."""
+        if not texto:
+            return self._cadena_fija(privado)
+        from .enrutador import elegir
+        e = elegir(texto, self, privado)
+        self._aviso_cadena = e.aviso
+        self.ultima_eleccion = e.como_dict()          # para el panel (no guarda el texto del pedido)
+        return e.cadena
+
+    def _cadena_fija(self, privado: bool = False) -> list:
         """Lista ordenada de (modelo, motivo). El primero que responda gana."""
         cfg = self.config.todo()
         self._aviso_cadena = ""
@@ -81,10 +92,11 @@ class Cerebro:
         return opciones
 
     # ---------------------------------------------------------------- llamada
-    def chat(self, mensajes: list, herramientas: list | None = None, privado: bool = False) -> Respuesta:
+    def chat(self, mensajes: list, herramientas: list | None = None, privado: bool = False,
+             texto: str = "") -> Respuesta:
         reintentos = self.config.get("salud", "reintentos")
         errores = []
-        cadena = self.cadena(privado)
+        cadena = self.cadena(privado, texto)
         for posicion, (modelo, motivo) in enumerate(cadena):
             info = self.modelos.get(modelo, {"proveedor": "ollama", "ubicacion": "local"})
             prov = self.proveedores[info["proveedor"]]
@@ -145,7 +157,7 @@ class Cerebro:
                 "es_principal": mid == cfg["cerebro"]["principal"], "es_respaldo": mid == self.respaldo(),
             })
         return {
-            "activo": self.ultimo, "modo": cfg["cerebro"]["modo"], "principal": cfg["cerebro"]["principal"],
+            "activo": self.ultimo, "eleccion": self.ultima_eleccion, "modo": cfg["cerebro"]["modo"], "principal": cfg["cerebro"]["principal"],
             "respaldo": self.respaldo(), "presupuesto_mensual_usd": cfg["cerebro"]["presupuesto_mensual_usd"],
             "gasto_mes_usd": self.almacen.gasto_del_mes(), "privacidad": cfg["privacidad"],
             "modelos": modelos, "cambios": self.almacen.cambios_modelo(),

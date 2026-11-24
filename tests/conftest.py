@@ -80,6 +80,8 @@ def luna(tmp_path, monkeypatch):
     monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
     monkeypatch.setenv("ASISTENTE_MODELO", "qwen3:8b")
     monkeypatch.setenv("ASISTENTE_PIN", "")
+    monkeypatch.setenv("LUNA_SEGUNDO_PLANO", "no")     # sin hilos de fondo: cada prueba descarta su Luna
+    monkeypatch.setenv("ASISTENTE_DESPERTADOR", "no")
     return cargar_luna(tmp_path)
 
 

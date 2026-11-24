@@ -22,6 +22,7 @@ import webbrowser
 import ipaddress
 import wave
 import ast
+import asyncio
 import shutil
 import importlib.util
 
@@ -90,8 +91,32 @@ def actualizar_catalogo() -> None:
     nuevo = catalogo(MODELO, PROVEEDORES["ollama"].modelos_instalados())
     MODELOS.clear()
     MODELOS.update(nuevo)
+
+
 CEREBRO = Cerebro(CONFIG, ALMACEN, PROVEEDORES, MODELOS, MODELO)
 _candado = threading.Lock()
+
+# ---------------------------------------------------------------- módulos de LEK (fase 2)
+from lek import monitor_pc
+from lek.notificaciones import Notificador
+from lek.memoria_semantica import EmbebedorOllama, MemoriaSemantica
+from lek.salud_corporal import SaludCorporal, ErrorPulso, HERRAMIENTA_MI_PULSO, HERRAMIENTAS_SIEMPRE_PRIVADAS
+from lek.pc.organizador import Organizador, cargar_config as config_organizador, HERRAMIENTAS as HERRAMIENTAS_ARCHIVOS
+from lek.automejora import decidir, ejecutar_habilidad_aprobada
+from lek.automejora.politica import analizar as analizar_codigo
+from lek.autonomia.proyectos import GestorProyectos, TransicionInvalida, herramientas_luna
+from lek.autonomia.programador import Programador
+from lek.cerebros.enrutador import elegir
+
+NOTIF = Notificador(ALMACEN)                      # Luna nunca actúa a escondidas: todo queda aquí y en un aviso
+MEMORIA = MemoriaSemantica(ALMACEN, EmbebedorOllama(OLLAMA))
+SALUD_CORPORAL = SaludCorporal(ALMACEN)           # pulso del reloj: solo en este PC
+ORGANIZADOR = Organizador(ALMACEN, config_organizador(DATOS / "organizador.json"))
+PROYECTOS = GestorProyectos(ALMACEN, avisar=lambda t: NOTIF.notificar("proyecto", "Proyectos", str(t)))
+# Automejora sin pedir permiso (riesgo bajo + pruebas superadas), siempre con aviso y el código visible.
+AUTOMEJORA_AUTONOMA = os.getenv("LUNA_AUTOMEJORA_AUTONOMA", "si").strip().lower() not in ("no", "0", "false")
+DESPERTADOR = None
+SEGUNDO_PLANO = os.getenv("LUNA_SEGUNDO_PLANO", "si").strip().lower() not in ("no", "0", "false")
 
 
 # ---------------------------------------------------------------- utilidades
@@ -122,9 +147,11 @@ def ahora() -> str:
 
 
 # ---------------------------------------------------------------- cerebro (lek/cerebros)
-def ollama_chat(mensajes: list, usar_tools: bool = True, privado: bool = False) -> dict:
-    """Piensa con el cerebro que toque (principal o respaldo) y devuelve un mensaje en formato común."""
-    return CEREBRO.chat(mensajes, herramientas_actuales() if usar_tools else None, privado=privado).como_mensaje()
+def ollama_chat(mensajes: list, usar_tools: bool = True, privado: bool = False, texto: str = "") -> dict:
+    """Piensa con el cerebro que toque y devuelve un mensaje en formato común.
+    Con `texto` (el pedido del usuario) el enrutador elige el modelo cuando el modo es "auto"."""
+    return CEREBRO.chat(mensajes, herramientas_actuales() if usar_tools else None, privado=privado,
+                        texto=texto).como_mensaje()
 
 
 pensar = ollama_chat
@@ -262,19 +289,42 @@ def indexar_documentos() -> list:
             if not parrafo:
                 continue
             if len(actual) + len(parrafo) > 900 and actual:
-                trozos.append({"archivo": p.name, "texto": actual, "palabras": palabras(actual + " " + p.stem)})
+                trozos.append({"archivo": p.name, "ruta": str(p.relative_to(CONOCIMIENTO)), "texto": actual,
+                               "palabras": palabras(actual + " " + p.stem)})
                 actual = ""
             actual += parrafo + "\n"
         if actual:
-            trozos.append({"archivo": p.name, "texto": actual, "palabras": palabras(actual + " " + p.stem)})
+            trozos.append({"archivo": p.name, "ruta": str(p.relative_to(CONOCIMIENTO)), "texto": actual,
+                           "palabras": palabras(actual + " " + p.stem)})
     _indice.update(firma=firma, trozos=trozos)
+    if SEGUNDO_PLANO:
+        threading.Thread(target=indexar_documentos_semantico, args=(trozos,), daemon=True).start()
     return trozos
+
+
+def indexar_documentos_semantico(trozos: list) -> None:
+    """Vectores de los documentos, en segundo plano y solo en este PC (solo recalcula lo que cambió)."""
+    try:
+        por_archivo = {}
+        for t in trozos:
+            por_archivo.setdefault(t.get("ruta", t["archivo"]), []).append(t)
+        for nombre, ts in por_archivo.items():
+            MEMORIA.indexar_documento(nombre, ts)
+        MEMORIA.podar_documentos(por_archivo)
+    except Exception as e:
+        print("  No pude indexar los documentos por significado:", e)
 
 
 def buscar_documentos(consulta: str) -> str:
     trozos = indexar_documentos()
     if not trozos:
         return "La carpeta 'conocimiento' está vacía. El usuario puede poner ahí PDF, Word o txt."
+    try:  # primero por significado (local); si no hay modelo de embeddings, por palabras
+        r = MEMORIA.buscar(consulta, k=3, tipos=("documento",), minimo=0.5)
+    except Exception:
+        r = []
+    if r:
+        return "\n\n".join(f"[{f.get('archivo', '')}]\n{(f.get('texto') or '')[:900]}" for f in r)
     q = palabras(consulta)
     puntuados = sorted(((len(q & t["palabras"]), t) for t in trozos), key=lambda x: -x[0])
     mejores = [t for s, t in puntuados[:3] if s > 0]
@@ -329,6 +379,7 @@ def abrir_programa(nombre: str) -> str:
             subprocess.Popen(["open", "-a", comando])
         else:
             subprocess.Popen([comando])
+        NOTIF.notificar("sistema", f"Abrí {nombre}", "Lo pediste en la conversación.")
         return f"Abriendo {nombre}."
     except Exception as e:
         return f"No pude abrir {nombre}: {e}"
@@ -367,6 +418,13 @@ def leer_info_habilidad(ruta: pathlib.Path) -> dict:
     codigo = ruta.read_text(encoding="utf-8")
     info = {"nombre": ruta.stem, "descripcion": "", "parametros": {}, "codigo": codigo,
             "alertas": sorted({v for k, v in RIESGOS.items() if re.search(k, codigo)})}
+    try:  # análisis de la política de automejora: motivos con número de línea
+        a = analizar_codigo(codigo)
+        info["riesgo"] = a["riesgo"]
+        info["alertas"] = sorted(set(info["alertas"]) | set(a["motivos"]))
+    except Exception:
+        info["riesgo"] = "alto"
+    info["activada_sola"] = "activada sola" in codigo.split("\n", 1)[0]
     try:
         for nodo in ast.parse(codigo).body:
             if isinstance(nodo, ast.Assign) and len(nodo.targets) == 1 and isinstance(nodo.targets[0], ast.Name):
@@ -386,14 +444,15 @@ def cargar_habilidades() -> dict:
         return _habilidades["lista"]
     lista = {}
     for p in archivos:
+        # Se lee sin ejecutar nada (ast). Cada habilidad corre aislada en su propio proceso al usarse:
+        # si falla o se cuelga, Luna sigue viva.
         try:
-            spec = importlib.util.spec_from_file_location(f"habilidad_{p.stem}", p)
-            modulo = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(modulo)
+            info = leer_info_habilidad(p)
+            if not any(isinstance(x, ast.FunctionDef) and x.name == "ejecutar" for x in ast.parse(info["codigo"]).body):
+                raise ValueError("no tiene ejecutar()")
             lista["hab_" + p.stem] = {
-                "archivo": p.name, "funcion": modulo.ejecutar,
-                "descripcion": str(getattr(modulo, "DESCRIPCION", p.stem)),
-                "parametros": dict(getattr(modulo, "PARAMETROS", {})),
+                "archivo": p.name, "descripcion": str(info["descripcion"] or p.stem),
+                "parametros": dict(info["parametros"] or {}),
             }
         except Exception as e:
             print(f"  La habilidad {p.name} tiene un error y no se cargó: {e}")
@@ -402,7 +461,11 @@ def cargar_habilidades() -> dict:
 
 
 def crear_habilidad(nombre: str, codigo: str, descripcion: str = "") -> str:
-    """Luna escribe una habilidad nueva. Queda en propuestas/ hasta que Sergio la apruebe."""
+    """Luna escribe una habilidad nueva. Se analiza (sin ejecutarla), se prueba aislada con sus EJEMPLOS y:
+    - riesgo bajo + pruebas superadas + automejora autónoma -> se activa sola;
+    - riesgo alto -> espera aprobación (ni siquiera se ejecuta en pruebas);
+    - si falla -> se rechaza y Luna recibe el motivo para corregirla.
+    SIEMPRE queda una notificación con el código completo: nunca se oculta."""
     n = slug(nombre)
     if not n:
         return "El nombre no sirve: usa letras minúsculas y guiones bajos."
@@ -410,16 +473,34 @@ def crear_habilidad(nombre: str, codigo: str, descripcion: str = "") -> str:
     if "DESCRIPCION" not in codigo:
         codigo = f"DESCRIPCION = {json.dumps(descripcion or n, ensure_ascii=False)}\n" + codigo
     try:
-        arbol = ast.parse(codigo)
-    except SyntaxError as e:
-        return f"El código tiene un error de sintaxis en la línea {e.lineno}: {e.msg}. Corrígelo y vuelve a intentarlo."
-    if not any(isinstance(x, ast.FunctionDef) and x.name == "ejecutar" for x in arbol.body):
-        return "Falta la función ejecutar(...) que devuelve un texto. Corrígelo y vuelve a intentarlo."
-    PROPUESTAS.mkdir(parents=True, exist_ok=True)
-    cabecera = f"# Habilidad creada por {mi_nombre()} el {datetime.date.today().isoformat()}\n"
-    (PROPUESTAS / f"{n}.py").write_text(cabecera + codigo.strip() + "\n", encoding="utf-8")
-    return (f"Listo, escribí la habilidad '{n}'. Quedó esperando que el usuario la revise y la apruebe "
-            f"en el botón Habilidades de la pantalla; dile eso.")
+        d = decidir(codigo, modo_autonomo=AUTOMEJORA_AUTONOMA)
+    except Exception as e:
+        d = {"accion": "pedir_aprobacion", "resumen": f"No pude probarla ({e}): queda para tu revisión.",
+             "motivos": [], "riesgo": "alto"}
+    ALMACEN.auditar("crear_habilidad", {"nombre": n, "accion": d["accion"], "riesgo": d.get("riesgo"),
+                                        "motivos": d.get("motivos", [])[:10]})
+    if d["accion"] == "rechazar":
+        NOTIF.notificar("codigo", f"Escribí la habilidad '{n}' pero no pasó las pruebas",
+                        d["resumen"], codigo=codigo)
+        return f"No la guardé: {d['resumen']} Corrígela y vuelve a intentarlo."
+    sola = d["accion"] == "activar_sola"
+    destino = (HABILIDADES if sola else PROPUESTAS) / f"{n}.py"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    if sola and destino.exists():
+        VERSIONES.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(destino, VERSIONES / f"{n}_{datetime.datetime.now():%Y%m%d_%H%M%S}.py")
+    estado = "activada sola" if sola else "esperando aprobación"
+    cabecera = f"# Habilidad creada por {mi_nombre()} el {datetime.date.today().isoformat()} ({estado})\n"
+    destino.write_text(cabecera + codigo.strip() + "\n", encoding="utf-8")
+    if sola:
+        NOTIF.notificar("codigo", f"Me mejoré: activé la habilidad '{n}'",
+                        d["resumen"] + " Puedes desactivarla en Habilidades.", codigo=codigo)
+        return (f"{d['resumen']} La habilidad '{n}' ya está activa. Dile a Sergio qué hiciste: "
+                "el código completo quedó en sus notificaciones y puede desactivarla cuando quiera.")
+    NOTIF.notificar("codigo", f"Escribí la habilidad '{n}': necesita tu aprobación",
+                    d["resumen"] + " " + "; ".join(d.get("motivos", [])[:5]), codigo=codigo)
+    return (f"{d['resumen']} Quedó esperando que el usuario la apruebe en el botón Habilidades; dile eso "
+            "y por qué necesita su permiso.")
 
 
 def proponer_mejora(titulo: str, problema: str = "", oportunidad: str = "", solucion: str = "",
@@ -469,6 +550,7 @@ def anotar_avance_lek(avance: str, verificacion: str) -> str:
     BITACORA.parent.mkdir(parents=True, exist_ok=True)
     with BITACORA.open("a", encoding="utf-8") as f:
         f.write(f"- [{datetime.date.today().isoformat()}] {avance.strip()} — Verificado: {verificacion.strip()}\n")
+    NOTIF.notificar("proyecto", "Anoté un avance de LEK", f"{avance.strip()} (verificado: {verificacion.strip()})")
     return "Avance anotado en la bitácora de LEK."
 
 
@@ -599,11 +681,14 @@ HERRAMIENTAS = [
     _f("cambiar_mi_nombre", "Cambia tu propio nombre, solo si el usuario te lo pide.",
        {"nombre": _txt, "por_que": _txt}, ["nombre"]),
     _f("crear_habilidad",
-       "Escribe una habilidad NUEVA para ti misma en Python cuando te falte una capacidad. Queda esperando "
-       "que el usuario la apruebe. 'codigo' es un archivo Python completo con: "
+       "Escribe una habilidad NUEVA para ti misma en Python cuando te falte una capacidad. Si es de bajo riesgo "
+       "y sus ejemplos pasan, se activa sola (el usuario recibe el código en una notificación); si no, espera su "
+       "aprobación. 'codigo' es un archivo Python completo con: "
        "DESCRIPCION = \"qué hace\"; PARAMETROS = {\"param\": \"qué es\"} (todos texto); "
-       "def ejecutar(param): ... return \"resultado en texto\". Solo librería estándar o requests. "
-       "Nada de borrar archivos ni ejecutar comandos.",
+       "def ejecutar(param): ... return \"resultado en texto\"; y OBLIGATORIO "
+       "EJEMPLOS = [{\"args\": {\"param\": \"valor\"}, \"espera_contiene\": \"texto\"}] (literales, mejor sin internet). "
+       "Solo librería estándar (math, datetime, re, json...) o requests.get a sitios conocidos. "
+       "Nada de archivos, comandos, os, subprocess ni eval.",
        {"nombre": _txt, "descripcion": _txt, "codigo": _txt}, ["nombre", "codigo"]),
     _f("proponer_mejora",
        "Registra una propuesta de mejora (para ti, para LEK o para el trabajo del usuario) con el formato completo. "
@@ -629,12 +714,70 @@ FUNCIONES = {
     "diagnostico": diagnostico, "ver_memoria": ver_memoria, "buscar_conversaciones": buscar_conversaciones,
 }
 
+# --- PC: estado del equipo y organizador de archivos (mueve, nunca borra; todo se deshace y se notifica)
+HERRAMIENTAS.append(monitor_pc.HERRAMIENTA)
+FUNCIONES["estado_pc"] = lambda **_: monitor_pc.estado_pc()
+
+
+def _archivos(nombre: str):
+    def funcion(**argumentos):
+        texto = ORGANIZADOR.ejecutar(nombre, argumentos)
+        if nombre != "analizar_archivos":
+            NOTIF.notificar("archivos", "Organicé tus archivos" if nombre == "organizar_archivos"
+                            else "Deshice una organización", str(texto)[:600])
+        return texto
+    return funcion
+
+
+HERRAMIENTAS += HERRAMIENTAS_ARCHIVOS
+for _n in ("analizar_archivos", "organizar_archivos", "deshacer_organizacion"):
+    FUNCIONES[_n] = _archivos(_n)
+
+# --- salud: pulso del reloj, SIEMPRE privado (nunca sale del PC)
+HERRAMIENTAS.append(HERRAMIENTA_MI_PULSO)
+FUNCIONES["mi_pulso"] = SALUD_CORPORAL.mi_pulso
+
+
+# --- objetivos y proyectos persistentes: Luna propone el plan; solo el usuario lo aprueba
+def pensar_plan(prompt):
+    return ollama_chat([{"role": "user", "content": prompt}], usar_tools=False)
+
+
+_defs, _funcs = herramientas_luna(PROYECTOS, pensar_plan)
+HERRAMIENTAS += _defs
+FUNCIONES.update(_funcs)
+
 
 # Herramientas que devuelven información de una clase con regla de privacidad propia
 HERRAMIENTAS_PRIVADAS = {"ver_memoria": "memoria", "leer_notas": "notas", "buscar_documentos": "documentos"}
 
 
+# --- análisis exacto de archivos (PDF, Word, Excel/CSV, imágenes, GLB): solo lectura, resultados privados
+from lek import analisis
+from lek.pc.organizador import carpeta_de_usuario
+
+
+def raices_analisis() -> list:
+    """Carpetas que Luna puede leer para analizar (Sergio autorizó analizar sus archivos)."""
+    raices = [CONOCIMIENTO]
+    for alias in ("Descargas", "Escritorio", "Documentos"):
+        try:
+            c = carpeta_de_usuario(alias)
+            if c:
+                raices.append(pathlib.Path(c))
+        except Exception:
+            pass
+    return raices
+
+
+HERRAMIENTAS += analisis.HERRAMIENTAS
+FUNCIONES.update(analisis.crear_funciones(raices_analisis))
+HERRAMIENTAS_PRIVADAS.update(analisis.HERRAMIENTAS_PRIVADAS)
+
+
 def herramienta_es_privada(nombre: str) -> bool:
+    if nombre in HERRAMIENTAS_SIEMPRE_PRIVADAS:      # salud: no depende de ningún ajuste
+        return True
     clase = HERRAMIENTAS_PRIVADAS.get(nombre)
     if clase and CONFIG.get("privacidad", clase) == "local":
         return True
@@ -657,7 +800,13 @@ def ejecutar_herramienta(nombre: str, argumentos) -> str:
             argumentos = {}
     funcion = FUNCIONES.get(nombre)
     if not funcion and nombre in cargar_habilidades():
-        funcion = cargar_habilidades()[nombre]["funcion"]
+        h = cargar_habilidades()[nombre]
+        print(f"  -> {nombre}({argumentos}) [aislada]")
+        r = ejecutar_habilidad_aprobada(HABILIDADES / h["archivo"], argumentos or {}, tiempo_limite=30)
+        if not r.get("ok"):
+            registrar_error(nombre)
+            return f"La habilidad falló: {r.get('error')}"
+        return str(r.get("resultado"))[:4000]
     if not funcion:
         return f"No existe la herramienta {nombre}."
     try:
@@ -738,8 +887,11 @@ def contexto_pasado(texto: str, para_nube: bool, desde_id: int) -> str:
     resumenes = ALMACEN.resumenes(7)
     if resumenes:
         partes.append("Resúmenes de días anteriores:\n" + "\n".join(f"- {r['dia']}: {r['resumen']}" for r in resumenes))
-    relacionados = [f for f in ALMACEN.buscar_mensajes(texto, limite=6, antes_de_id=desde_id)
-                    if not (para_nube and f["privado"])]
+    try:  # por significado + por palabras (todo local); si no hay embeddings, solo por palabras
+        candidatos = MEMORIA.buscar_hibrido(texto, k=6, tipos=("mensaje",), antes_de_id=desde_id, minimo=0.55)
+    except Exception:
+        candidatos = ALMACEN.buscar_mensajes(texto, limite=6, antes_de_id=desde_id)
+    relacionados = [f for f in candidatos if not (para_nube and f.get("privado"))]
     if relacionados:
         partes.append("Fragmentos de conversaciones pasadas relacionados:\n" + "\n".join(
             f"- [{f['fecha'][:10]}] {'Usuario' if f['rol'] == 'usuario' else 'Tú'}: {f['contenido'][:220]}"
@@ -749,10 +901,16 @@ def contexto_pasado(texto: str, para_nube: bool, desde_id: int) -> str:
 
 def responder(texto: str, cliente: str = "web") -> str:
     """Un turno de conversación. Todo se guarda para siempre; lo privado nunca va a la nube."""
-    ALMACEN.guardar_mensaje("usuario", texto, cliente)
+    try:  # el enrutador clasifica el pedido (simple / normal / compleja / privada) sin llamar a ningún modelo
+        eleccion = elegir(texto, CEREBRO)
+    except Exception as e:
+        print("  El enrutador falló, uso la cadena de siempre:", e)
+        eleccion = None
+    privado = bool(eleccion and eleccion.clase == "privada")   # privado desde el inicio: nada sale del PC
+    ALMACEN.guardar_mensaje("usuario", texto, cliente, privado=privado)
     inicio = int(ALMACEN.meta("inicio_contexto", "0") or 0)
     recientes = [m for m in ALMACEN.ultimos_mensajes(21) if m["id"] > inicio]
-    primero = CEREBRO.cadena()[0][0]
+    primero = CEREBRO.cadena(True)[0][0] if privado else (eleccion.cadena[0][0] if eleccion else CEREBRO.cadena()[0][0])
     para_nube = CEREBRO.ubicacion(primero) == "nube"
     con_memoria = not para_nube or CONFIG.get("privacidad", "memoria") == "nube"
     desde = recientes[0]["id"] if recientes else 0
@@ -769,11 +927,10 @@ def responder(texto: str, cliente: str = "web") -> str:
     nota = f"[Nota del sistema, no la repitas: hoy es {ahora()}.{contexto}]\n\n"
     if mensajes[-1]["role"] == "user":
         mensajes[-1] = {**mensajes[-1], "content": nota + mensajes[-1]["content"]}
-    privado = False
     respuesta = ""
     try:
         for _ in range(5):  # hasta 5 rondas de herramientas
-            msg = ollama_chat(mensajes, privado=privado)
+            msg = ollama_chat(mensajes, privado=privado, texto=texto)
             llamadas = msg.get("tool_calls") or []
             if not llamadas:
                 respuesta = limpiar_respuesta(msg.get("content", ""))
@@ -798,7 +955,28 @@ def responder(texto: str, cliente: str = "web") -> str:
     if not respuesta:
         respuesta = "Listo."
     ALMACEN.guardar_mensaje("luna", respuesta, cliente, modelo=CEREBRO.ultimo["modelo"], privado=privado)
+    indexar_en_segundo_plano()
     return respuesta
+
+
+_indexando = threading.Lock()
+
+
+def indexar_en_segundo_plano() -> None:
+    """Vectores de lo nuevo (memoria por significado). Nunca dentro de la respuesta: compite por RAM."""
+    if not SEGUNDO_PLANO:
+        return
+
+    def trabajo():
+        if not _indexando.acquire(blocking=False):
+            return
+        try:
+            MEMORIA.indexar_pendientes(limite=200)
+        except Exception as e:
+            print("  No pude indexar la memoria:", e)
+        finally:
+            _indexando.release()
+    threading.Thread(target=trabajo, daemon=True).start()
 
 
 def registrar_turno(*_args, **_kwargs) -> None:
@@ -1212,6 +1390,208 @@ async def collar(request: Request):
     return Response(content=wav, media_type="audio/wav")
 
 
+# ---------------------------------------------------------------- notificaciones (todo lo que Luna hace sola)
+@app.get("/api/notificaciones")
+def ver_notificaciones(request: Request, no_leidas: bool = False, limite: int = 50):
+    revisar_pin(request)
+    return NOTIF.api_listar(no_leidas, min(max(limite, 1), 200))
+
+
+@app.post("/api/notificaciones/leidas")
+async def marcar_notificaciones(request: Request):
+    revisar_pin(request)
+    cuerpo = await request.json() if (await request.body()) else {}
+    return NOTIF.api_marcar(cuerpo if isinstance(cuerpo, dict) else {})
+
+
+# ---------------------------------------------------------------- salud: pulso del Apple Watch (solo local)
+@app.post("/api/salud/pulso")
+async def salud_pulso(request: Request):
+    revisar_pin(request)
+    d = await request.json()
+    try:
+        nueva = SALUD_CORPORAL.registrar(d.get("bpm"), d.get("fecha"), d.get("origen", "apple_watch"))
+    except (ErrorPulso, AttributeError) as e:
+        raise HTTPException(400, str(e))
+    return {"guardada": nueva, "resumen": SALUD_CORPORAL.resumen(60)}
+
+
+@app.post("/api/salud/pulso/lote")
+async def salud_pulso_lote(request: Request):
+    revisar_pin(request)
+    d = await request.json()
+    try:
+        origen = str(d.get("origen", "apple_watch")) if isinstance(d, dict) else "apple_watch"
+        return SALUD_CORPORAL.registrar_lote(d, origen=origen)
+    except ErrorPulso as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/salud/pulso")
+def salud_pulso_ver(request: Request, minutos: int = 60):
+    revisar_pin(request)
+    return SALUD_CORPORAL.respuesta_api(min(max(minutos, 5), 24 * 60))
+
+
+# ---------------------------------------------------------------- PC: estado y organizador de archivos
+@app.get("/api/pc")
+def estado_del_pc(request: Request):
+    revisar_pin(request)
+    return monitor_pc.leer()
+
+
+@app.get("/api/archivos/estado")
+def archivos_estado(request: Request):
+    revisar_pin(request)
+    return ORGANIZADOR.api_estado()
+
+
+@app.post("/api/archivos/analizar")
+def archivos_analizar(request: Request):
+    revisar_pin(request)
+    return ORGANIZADOR.api_analizar()
+
+
+@app.post("/api/archivos/organizar")
+async def archivos_organizar(request: Request):
+    revisar_aprobacion(request)
+    d = await request.json() if (await request.body()) else {}
+    r = await asyncio.to_thread(ORGANIZADOR.api_organizar, (d or {}).get("plan"))
+    NOTIF.notificar("archivos", "Organicé tus archivos", str(r.get("estado", ""))[:600])
+    return r
+
+
+@app.post("/api/archivos/deshacer")
+async def archivos_deshacer(request: Request):
+    revisar_aprobacion(request)
+    d = await request.json()
+    try:
+        r = ORGANIZADOR.api_deshacer(int(d["id"]))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "Falta el id del movimiento")
+    NOTIF.notificar("archivos", "Deshice un movimiento", str(r.get("estado", ""))[:600])
+    return r
+
+
+# ---------------------------------------------------------------- objetivos y proyectos
+@app.get("/api/proyectos")
+def ver_proyectos_api(request: Request):
+    revisar_pin(request)
+    return {**PROYECTOS.resumen_api(), "aprobaciones": PROYECTOS.aprobaciones_pendientes()}
+
+
+@app.post("/api/proyectos/{pid}/{accion}")
+def accion_proyecto(pid: int, accion: str, request: Request):
+    revisar_aprobacion(request)
+    if accion not in ("aprobar", "pausar", "reanudar", "cancelar"):
+        raise HTTPException(404, "Acción desconocida")
+    try:
+        return PROYECTOS.accion(pid, accion)
+    except KeyError:
+        raise HTTPException(404, "No existe ese proyecto")
+    except TransicionInvalida as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/aprobaciones/{aid}/{accion}")
+def responder_aprobacion(aid: int, accion: str, request: Request):
+    revisar_aprobacion(request)
+    if accion not in ("aprobar", "rechazar"):
+        raise HTTPException(404, "Acción desconocida")
+    try:
+        return PROYECTOS.responder_aprobacion(aid, accion == "aprobar")
+    except KeyError:
+        raise HTTPException(404, "No existe esa aprobación")
+    except TransicionInvalida as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/tareas/{tid}/{accion}")
+def accion_tarea(tid: int, accion: str, request: Request):
+    revisar_aprobacion(request)
+    try:
+        if accion == "desbloquear":
+            return PROYECTOS.desbloquear(tid)
+        if accion == "hecha":
+            return PROYECTOS.marcar_completada(tid, "marcada por el usuario")
+    except KeyError:
+        raise HTTPException(404, "No existe esa tarea")
+    except TransicionInvalida as e:
+        raise HTTPException(409, str(e))
+    raise HTTPException(404, "Acción desconocida")
+
+
+def ejecutar_tarea(tarea, punto):
+    """Ejecutor de tareas en segundo plano: solo piensa y escribe texto (nivel 0/1). Nivel 2 lo hace el usuario."""
+    if tarea["nivel_autorizacion"] >= 2:
+        return {"estado": "bloqueada", "motivo": "Esta acción la debes hacer tú; márcala como hecha al terminar."}
+    previos = "\n".join(f"- {r[:1500]}" for r in tarea["resultados_previos"].values()) or "(ninguno)"
+    pedido = (f"Objetivo: {tarea['objetivo']} (éxito: {tarea['criterio_exito']}).\nTarea: {tarea['titulo']}\n"
+              f"{tarea['descripcion']}\nResultados de tareas anteriores:\n{previos}\nHaz la tarea y entrega el resultado.")
+    msg = ollama_chat([{"role": "system", "content": construir_prompt(incluir_memoria=False)},
+                       {"role": "user", "content": pedido}], usar_tools=False, privado=True)
+    return {"resultado": limpiar_respuesta(msg.get("content", ""))}
+
+
+def pc_libre() -> bool:
+    r = recursos()
+    return r.get("ram_uso_pct", 0) < 85 and ((r.get("gpu") or {}).get("uso_pct", 0) < 50)
+
+
+# ---------------------------------------------------------------- voz en segundo plano, memoria y autoevaluación
+@app.get("/api/voz")
+def estado_voz(request: Request):
+    revisar_pin(request)
+    if DESPERTADOR is None:
+        from lek.voz.despertador import diagnosticar
+        return {"activo": False, **diagnosticar()}
+    return DESPERTADOR.estado()
+
+
+@app.get("/api/memoria")
+def estado_memoria(request: Request):
+    revisar_pin(request)
+    return {"mensajes": ALMACEN.total_mensajes(), "semantica": MEMORIA.estado()}
+
+
+EVALUACION: dict = {"estado": "sin evaluar"}
+
+
+@app.post("/api/inteligencia/evaluar")
+def evaluar_modelos(request: Request):
+    """Banco de 30 preguntas verificables (escalas, fechas, áreas, herramientas...) a cada modelo."""
+    revisar_aprobacion(request)
+    from lek.evaluacion import comparar, guardar
+    if EVALUACION.get("estado") == "evaluando":
+        return EVALUACION
+    modelos = [k for k, v in MODELOS.items() if v["ubicacion"] == "local"][:3]
+    if clave_claude():
+        modelos.append(CONFIG.get("cerebro", "principal"))
+
+    def trabajo():
+        EVALUACION.update(estado="evaluando", modelos=modelos)
+        try:
+            pares = [(PROVEEDORES[MODELOS[m]["proveedor"]], m) for m in modelos if m in MODELOS]
+            salida = comparar(pares, almacen=ALMACEN, calentar=True,
+                              sistema=construir_prompt(incluir_memoria=False))
+            avisos = [guardar(ALMACEN, r).get("aviso") for r in salida["resultados"]]
+            EVALUACION.update(estado="lista", informe=salida["informe"], avisos=[a for a in avisos if a])
+            NOTIF.notificar("sistema", "Terminé de evaluar mis cerebros",
+                            str(salida["informe"].get("recomendacion", ""))[:600])
+        except Exception as e:
+            EVALUACION.update(estado="error", detalle=str(e)[:300])
+
+    threading.Thread(target=trabajo, daemon=True).start()
+    return {"estado": "evaluando", "modelos": modelos}
+
+
+@app.get("/api/inteligencia/evaluar")
+def ver_evaluacion(request: Request):
+    revisar_pin(request)
+    from lek.evaluacion import historial
+    return {**EVALUACION, "historial": historial(ALMACEN)[:20]}
+
+
 # ---------------------------------------------------------------- arranque
 def ip_local() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1251,9 +1631,13 @@ def certificado(ip: str, extra_ips: tuple = (), extra_nombres: tuple = ()) -> tu
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
+    # Certificado propio (p. ej. el oficial de `tailscale cert`): el iPhone y Atajos confían en él sin instalar nada.
+    propio_crt, propio_key = os.getenv("ASISTENTE_CERT", "").strip(), os.getenv("ASISTENTE_KEY", "").strip()
+    if propio_crt and propio_key and pathlib.Path(propio_crt).exists() and pathlib.Path(propio_key).exists():
+        return propio_crt, propio_key
     CERTS.mkdir(parents=True, exist_ok=True)
     crt, key, marca = CERTS / "cert.pem", CERTS / "key.pem", CERTS / "ip.txt"
-    firma = ",".join([ip, *extra_ips, *extra_nombres])
+    firma = ",".join(["v2", ip, *extra_ips, *extra_nombres])
     if crt.exists() and key.exists() and marca.exists() and marca.read_text() == firma:
         return str(crt), str(key)
     clave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -1263,11 +1647,18 @@ def certificado(ip: str, extra_ips: tuple = (), extra_nombres: tuple = ()) -> tu
     direcciones = ["127.0.0.1", ip, *[i for i in extra_ips if i]]
     alt = x509.SubjectAlternativeName([x509.DNSName(n) for n in dict.fromkeys(nombres)] +
                                       [x509.IPAddress(ipaddress.ip_address(i)) for i in dict.fromkeys(direcciones)])
+    # v2: lo que exige iOS a un certificado de servidor (≤ 825 días, uso "servidor", CA para poder instalarlo)
     cert = (x509.CertificateBuilder().subject_name(nombre).issuer_name(nombre)
             .public_key(clave.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(hoy - datetime.timedelta(days=1))
-            .not_valid_after(hoy + datetime.timedelta(days=1825))
-            .add_extension(alt, critical=False).sign(clave, hashes.SHA256()))
+            .not_valid_after(hoy + datetime.timedelta(days=800))
+            .add_extension(alt, critical=False)
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+            .add_extension(x509.KeyUsage(digital_signature=True, key_encipherment=True, key_cert_sign=True,
+                                         content_commitment=False, data_encipherment=False, key_agreement=False,
+                                         crl_sign=False, encipher_only=False, decipher_only=False), critical=True)
+            .sign(clave, hashes.SHA256()))
     crt.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     key.write_bytes(clave.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
                                         serialization.NoEncryption()))
@@ -1320,10 +1711,10 @@ def calentar_cerebro() -> None:
         pass
 
 
-def abrir_ventana_luna() -> None:
+def abrir_ventana_luna(manos: bool = True) -> None:
     """Abre a Luna en su propia ventana (Edge o Chrome en modo app), escuchando su nombre.
     Usa un perfil aparte para que el permiso del micrófono se recuerde y pueda hablar sin tocar nada."""
-    url = f"http://localhost:{PUERTO_PC}/?manos=1"
+    url = f"http://localhost:{PUERTO_PC}/" + ("?manos=1" if manos else "")
     if SISTEMA == "Windows":
         local, pf, pf86 = os.getenv("LOCALAPPDATA", ""), os.getenv("ProgramFiles", ""), os.getenv("ProgramFiles(x86)", "")
         candidatos = [pathlib.Path(pf86, "Microsoft/Edge/Application/msedge.exe"), pathlib.Path(pf, "Microsoft/Edge/Application/msedge.exe"),
@@ -1448,12 +1839,16 @@ def main():
     print("  " + "=" * 52 + "\n")
     if not clave_claude():  # con Claude no hace falta ocupar RAM con el modelo local
         threading.Thread(target=calentar_cerebro, daemon=True).start()
+    voz_fondo = encender_despertador()
     if ABRIR_VENTANA:
-        threading.Timer(2, abrir_ventana_luna).start()
+        # Si ya escucha "Luna" en segundo plano, la ventana abre sin micrófono (si no, respondería dos veces).
+        threading.Timer(2, abrir_ventana_luna, kwargs={"manos": not voz_fondo}).start()
     revision = threading.Timer(180, revision_diaria)  # iniciativa propia, una vez al día
     revision.daemon = True
     revision.start()
-    import asyncio
+    threading.Timer(60, indexar_en_segundo_plano).start()   # memoria por significado, sin estorbar el arranque
+    programador = Programador(PROYECTOS, ejecutar_tarea, pc_libre)
+    programador.arrancar()
 
     async def correr():
         # HTTPS para el celular y el collar; HTTP solo para este mismo PC (localhost es seguro para el micrófono)
@@ -1462,7 +1857,40 @@ def main():
         pc = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PUERTO_PC, log_level="warning"))
         await asyncio.gather(celular.serve(), pc.serve())
 
-    asyncio.run(correr())
+    try:
+        asyncio.run(correr())
+    finally:
+        programador.detener(10)
+        if DESPERTADOR is not None:
+            DESPERTADOR.apagar()
+
+
+def encender_despertador() -> bool:
+    """'Luna' en segundo plano, sin ventana: si vosk + sounddevice + el modelo están instalados
+    (instalar_voz.bat), se enciende sola. ASISTENTE_DESPERTADOR=no la apaga; =si la exige."""
+    global DESPERTADOR
+    modo = os.getenv("ASISTENTE_DESPERTADOR", "auto").strip().lower()
+    if modo in ("no", "0", "false", "off"):
+        return False
+    try:
+        from lek.voz.despertador import Despertador
+        d = Despertador(
+            "luna", lambda t: limpiar_respuesta(responder(t, "voz")),
+            sintetizar=sintetizar if SISTEMA == "Windows" else None,
+            transcribir_wav=transcribir if os.getenv("DESPERTADOR_WHISPER", "no") == "si" else None)
+        faltan = d.faltan()
+        if faltan:
+            if modo in ("si", "sí", "1", "true", "on"):
+                print("  Voz en segundo plano: falta", ", ".join(faltan), "(ejecuta instalar_voz.bat)")
+            return False
+        if d.encender():
+            DESPERTADOR = d
+            print("  Voz: di 'Luna' en cualquier momento, sin abrir nada (escucha local)")
+            NOTIF.notificar("sistema", "Te escucho en segundo plano", "Di 'Luna' y tu pedido; el audio no sale del PC.")
+            return True
+    except Exception as e:
+        print("  No pude encender la voz en segundo plano:", e)
+    return False
 
 
 if __name__ == "__main__":

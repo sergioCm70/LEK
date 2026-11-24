@@ -41,7 +41,7 @@ def test_con_claude_la_memoria_no_sale_del_pc(luna):
     nube._configurado = True
     nube.respuestas = [llamada("ver_memoria", {})]
     local.respuestas = ["Recuerdo que tu wifi tiene una clave guardada."]
-    respuesta = luna.responder("¿qué recuerdas de mí?")
+    respuesta = luna.responder("dime algo útil para hoy")   # pedido neutro: el modelo de la nube decide ver_memoria
     texto_nube = str(nube.recibido)
     assert "secreta123" not in texto_nube                 # ni en el prompt ni en ningún mensaje
     assert len(nube.recibido) == 1                         # tras la herramienta privada, el turno sigue en el PC
@@ -74,12 +74,30 @@ def test_habilidad_de_escala_sigue_funcionando(luna):
 
 
 def test_crear_y_aprobar_habilidad(luna):
-    codigo = 'DESCRIPCION = "Duplica"\nPARAMETROS = {"n": "número"}\ndef ejecutar(n):\n    return str(int(n) * 2)'
-    assert "esperando" in luna.crear_habilidad("duplicar", codigo)
+    # Sin EJEMPLOS se rechaza, pero igual se avisa con el código (nunca se oculta)
+    sin_ejemplos = 'DESCRIPCION = "Duplica"\nPARAMETROS = {"n": "número"}\ndef ejecutar(n):\n    return str(int(n) * 2)'
+    assert "No la guardé" in luna.crear_habilidad("duplicar", sin_ejemplos)
+    # Riesgo alto (usa os): espera aprobación y no se activa sola
+    riesgosa = ('import os\nDESCRIPCION = "Carpeta"\nPARAMETROS = {"n": "número"}\n'
+                'def ejecutar(n):\n    return str(int(n) * 2) + os.sep\n'
+                'EJEMPLOS = [{"args": {"n": "2"}, "espera_contiene": "4"}]')
+    assert "apruebe" in luna.crear_habilidad("duplicar", riesgosa)
+    assert "hab_duplicar" not in luna.cargar_habilidades()
     with pytest.raises(Exception):
         luna.aprobar_habilidad(luna.Nombre(nombre="duplicar"), Peticion(host="192.168.1.9"))
     luna.aprobar_habilidad(luna.Nombre(nombre="duplicar"), Peticion())
-    assert luna.ejecutar_herramienta("hab_duplicar", {"n": "21"}) == "42"
+    assert luna.ejecutar_herramienta("hab_duplicar", {"n": "21"}).startswith("42")   # corre aislada
+    notifs = luna.NOTIF.listar()
+    assert all(n["tipo"] == "codigo" and n["codigo"] for n in notifs[:2])
+
+
+def test_automejora_segura_se_activa_sola_y_avisa(luna):
+    codigo = ('DESCRIPCION = "Triplica"\nPARAMETROS = {"n": "número"}\ndef ejecutar(n):\n    return str(int(n) * 3)\n'
+              'EJEMPLOS = [{"args": {"n": "2"}, "espera_contiene": "6"}]')
+    assert "ya está activa" in luna.crear_habilidad("triplicar", codigo)
+    assert luna.ejecutar_herramienta("hab_triplicar", {"n": "5"}) == "15"
+    n = luna.NOTIF.listar()[0]
+    assert n["tipo"] == "codigo" and "int(n) * 3" in n["codigo"]
 
 
 def test_olvidar_archiva(luna):
@@ -142,3 +160,15 @@ def test_certificado_incluye_nombre_de_tailscale(luna):
     alt = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     assert "zaza.tail1234.ts.net" in alt.get_values_for_type(x509.DNSName)
     assert any(str(i) == "100.101.102.103" for i in alt.get_values_for_type(x509.IPAddress))
+
+
+def test_pedido_privado_ni_siquiera_llega_a_la_nube(luna):
+    """El enrutador reconoce un pedido sobre la memoria y lo procesa en el PC desde el principio."""
+    luna.ALMACEN.recordar("Su contraseña del wifi es secreta123")
+    nube, local = luna.PROVEEDORES["claude"], luna.PROVEEDORES["ollama"]
+    nube._configurado = True
+    local.respuestas = ["Recuerdo varias cosas tuyas."]
+    luna.responder("¿qué recuerdas de mí?")
+    assert nube.recibido == []
+    assert "secreta123" in str(local.recibido[0]["mensajes"])
+    assert luna.ALMACEN.ultimos_mensajes(2)[0]["privado"] == 1     # el pedido queda marcado privado
