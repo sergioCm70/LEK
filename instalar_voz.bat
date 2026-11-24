@@ -39,9 +39,18 @@ if not exist "datos\modelos\%MODELO%\am" goto modelo_manual
 :modelo_listo
 echo  Modelo de voz listo: datos\modelos\%MODELO%
 echo.
+echo.
+echo  Instalando Whisper para entenderte mejor (opcional, si falla Luna usa Vosk)...
+python -m pip install faster-whisper
+if errorlevel 1 (
+  echo  Whisper no se pudo instalar en esta version de Python. Luna seguira entendiendote con Vosk.
+) else (
+  echo  Whisper listo: la primera vez que le hables descargara su modelo, unos 500 MB.
+)
+echo.
 python -c "from lek.voz.despertador import diagnosticar; d = diagnosticar(); print('  Todo listo.' if d['listo'] else '  Falta: ' + ' '.join(d['faltan']))"
 echo.
-echo  Para activarlo pon ASISTENTE_DESPERTADOR=si en el archivo .env y abre iniciar.bat
+echo  Abre iniciar.bat: di Luna en cualquier momento, sin abrir nada.
 echo  Para probar solo el oido: venv\Scripts\python -m lek.voz.despertador
 pause
 exit /b 0

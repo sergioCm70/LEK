@@ -107,7 +107,9 @@ from lek.automejora.politica import analizar as analizar_codigo
 from lek.autonomia.proyectos import GestorProyectos, TransicionInvalida, herramientas_luna
 from lek.autonomia.programador import Programador
 from lek.cerebros.enrutador import elegir
+from lek.voz.entender import Vocabulario, herramientas as herramientas_voz
 
+VOCABULARIO = Vocabulario(DATOS)                 # nombres y correcciones para entender mejor la voz
 NOTIF = Notificador(ALMACEN)                      # Luna nunca actúa a escondidas: todo queda aquí y en un aviso
 MEMORIA = MemoriaSemantica(ALMACEN, EmbebedorOllama(OLLAMA))
 SALUD_CORPORAL = SaludCorporal(ALMACEN)           # pulso del reloj: solo en este PC
@@ -747,6 +749,11 @@ _defs, _funcs = herramientas_luna(PROYECTOS, pensar_plan)
 HERRAMIENTAS += _defs
 FUNCIONES.update(_funcs)
 
+# --- voz: aprender nombres y correcciones para entender mejor lo que dice Sergio
+_defs, _funcs = herramientas_voz(VOCABULARIO)
+HERRAMIENTAS += _defs
+FUNCIONES.update(_funcs)
+
 
 # Herramientas que devuelven información de una clase con regla de privacidad propia
 HERRAMIENTAS_PRIVADAS = {"ver_memoria": "memoria", "leer_notas": "notas", "buscar_documentos": "documentos"}
@@ -899,8 +906,17 @@ def contexto_pasado(texto: str, para_nube: bool, desde_id: int) -> str:
     return ("\n" + "\n\n".join(partes) + "\n") if partes else ""
 
 
-def responder(texto: str, cliente: str = "web") -> str:
-    """Un turno de conversación. Todo se guarda para siempre; lo privado nunca va a la nube."""
+def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas: list | None = None) -> str:
+    """Un turno de conversación. Todo se guarda para siempre; lo privado nunca va a la nube.
+    voz=True: el texto viene del reconocimiento de voz (se corrige con lo aprendido y se interpreta)."""
+    nota_voz = ""
+    if voz:
+        try:
+            texto = VOCABULARIO.aplicar(texto)
+            alternativas = [VOCABULARIO.aplicar(a) for a in (alternativas or []) if isinstance(a, str)][:3]
+            nota_voz = VOCABULARIO.nota(texto, alternativas)
+        except Exception as e:
+            print("  No pude preparar la nota de voz:", e)
     try:  # el enrutador clasifica el pedido (simple / normal / compleja / privada) sin llamar a ningún modelo
         eleccion = elegir(texto, CEREBRO)
     except Exception as e:
@@ -924,7 +940,7 @@ def responder(texto: str, cliente: str = "web") -> str:
     mensajes = [sistema(con_memoria)] + [
         {"role": "user" if m["rol"] == "usuario" else "assistant", "content": m["contenido"], "privado": bool(m["privado"])}
         for m in recientes]
-    nota = f"[Nota del sistema, no la repitas: hoy es {ahora()}.{contexto}]\n\n"
+    nota = f"[Nota del sistema, no la repitas: hoy es {ahora()}.{nota_voz}{contexto}]\n\n"
     if mensajes[-1]["role"] == "user":
         mensajes[-1] = {**mensajes[-1], "content": nota + mensajes[-1]["content"]}
     respuesta = ""
@@ -1053,14 +1069,44 @@ def revision_diaria() -> None:
 _whisper = None
 
 
-def transcribir(ruta_wav: str) -> str:
+_candado_whisper = threading.Lock()
+
+
+def cargar_whisper():
     global _whisper
-    if _whisper is None:
-        from faster_whisper import WhisperModel
-        print(f"  Cargando Whisper '{WHISPER_MODELO}' (la primera vez descarga el modelo)...")
-        _whisper = WhisperModel(WHISPER_MODELO, device="cpu", compute_type="int8")
-    segmentos, _ = _whisper.transcribe(ruta_wav, language="es", vad_filter=True)
+    with _candado_whisper:
+        if _whisper is None:
+            from faster_whisper import WhisperModel
+            modelo = WHISPER_MODELO
+            try:  # con la RAM casi llena (Revit abierto), un modelo más liviano para no ahogar el PC
+                libre_gb = (monitor_pc.leer().get("memoria") or {})
+                libre_gb = (libre_gb.get("total_mb", 0) - libre_gb.get("usada_mb", 0)) / 1024
+                if modelo in ("small", "medium", "large-v3") and 0 < libre_gb < 1.2:
+                    print(f"  Poca RAM libre ({libre_gb:.1f} GB): uso Whisper 'base' en vez de '{modelo}'")
+                    modelo = "base"
+            except Exception:
+                pass
+            print(f"  Cargando Whisper '{modelo}' (la primera vez descarga el modelo)...")
+            _whisper = WhisperModel(modelo, device="cpu", compute_type="int8")
+    return _whisper
+
+
+def transcribir(ruta_wav: str, pista: str = "") -> str:
+    segmentos, _ = cargar_whisper().transcribe(ruta_wav, language="es", vad_filter=True,
+                                       initial_prompt=pista or None, beam_size=5)
     return " ".join(s.text.strip() for s in segmentos).strip()
+
+
+def transcribir_voz(ruta_wav: str) -> str:
+    """Whisper con tu vocabulario como pista (nombres bien escritos). Si falla, el despertador usa Vosk."""
+    return transcribir(ruta_wav, VOCABULARIO.pista_whisper())
+
+
+def usar_whisper_en_voz() -> bool:
+    """Whisper entiende mucho mejor que Vosk; se usa si está instalado (DESPERTADOR_WHISPER=no lo apaga)."""
+    if os.getenv("DESPERTADOR_WHISPER", "auto").strip().lower() in ("no", "0", "false"):
+        return False
+    return importlib.util.find_spec("faster_whisper") is not None
 
 
 PS_VOZ = r"""
@@ -1121,6 +1167,50 @@ def revisar_pin(request: Request) -> None:
 class Mensaje(BaseModel):
     texto: str
     cliente: str = "web"
+    voz: bool = False                 # el texto viene de lo que el usuario dijo en voz alta
+    alternativas: list = []           # otras formas en que el reconocedor pudo oírlo
+
+
+@app.get("/api/mensajes")
+def mensajes_nuevos(request: Request, desde: int = -1):
+    """Mensajes posteriores a `desde` (para ver en pantalla lo que se habló por voz o desde el celular).
+    desde=-1: solo dice cuál es el último, para empezar a seguir desde ahí."""
+    revisar_pin(request)
+    if desde < 0:
+        ultimos = ALMACEN.ultimos_mensajes(1)
+        return {"ultimo": ultimos[0]["id"] if ultimos else 0, "mensajes": []}
+    filas = ALMACEN._q("SELECT id, fecha, cliente, rol, contenido FROM mensajes WHERE id > ? ORDER BY id LIMIT 50",
+                       (desde,))
+    return {"ultimo": filas[-1]["id"] if filas else desde, "mensajes": filas}
+
+
+@app.get("/api/voz/vivo")
+def voz_en_vivo(request: Request):
+    """Lo que la escucha en segundo plano está oyendo ahora mismo (para escribirlo en pantalla)."""
+    revisar_pin(request)
+    if DESPERTADOR is None:
+        return {"activo": False}
+    e = DESPERTADOR.estado()
+    return {k: e.get(k) for k in ("activo", "estado", "parcial", "ultimo_texto", "activaciones", "en_pausa")}
+
+
+@app.get("/api/vocabulario")
+def ver_vocabulario(request: Request):
+    revisar_pin(request)
+    return {"palabras": VOCABULARIO.palabras(), "correcciones": VOCABULARIO.correcciones()}
+
+
+class Palabra(BaseModel):
+    palabra: str = ""
+    oido: str = ""
+
+
+@app.post("/api/vocabulario")
+def agregar_vocabulario(p: Palabra, request: Request):
+    revisar_pin(request)
+    if p.oido:
+        return {"mensaje": VOCABULARIO.aprender_correccion(p.oido, p.palabra)}
+    return {"mensaje": VOCABULARIO.aprender_palabra(p.palabra)}
 
 
 @app.get("/")
@@ -1140,7 +1230,8 @@ def chat(m: Mensaje, request: Request):
     texto = m.texto.strip()[:2000]
     if not texto:
         raise HTTPException(400, "Mensaje vacío")
-    respuesta = responder(texto, m.cliente[:40] or "web")
+    respuesta = responder(texto, m.cliente[:40] or "web", voz=m.voz,
+                          alternativas=[str(a)[:300] for a in (m.alternativas or [])[:3]])
     return {"respuesta": respuesta, "asistente": mi_nombre(), "cerebro": CEREBRO.ultimo["modelo"],
             "degradado": CEREBRO.ultimo["degradado"], "aviso": CEREBRO.ultimo["aviso"]}
 
@@ -1875,9 +1966,11 @@ def encender_despertador() -> bool:
     try:
         from lek.voz.despertador import Despertador
         d = Despertador(
-            "luna", lambda t: limpiar_respuesta(responder(t, "voz")),
+            "luna", lambda t: limpiar_respuesta(responder(t, "voz", voz=True)),
             sintetizar=sintetizar if SISTEMA == "Windows" else None,
-            transcribir_wav=transcribir if os.getenv("DESPERTADOR_WHISPER", "no") == "si" else None)
+            transcribir_wav=transcribir_voz if usar_whisper_en_voz() else None,
+            silencio_fin_s=float(os.getenv("DESPERTADOR_SILENCIO", "1.4")),   # deja pensar sin cortarte
+            max_pedido_s=float(os.getenv("DESPERTADOR_MAXIMO", "25")))
         faltan = d.faltan()
         if faltan:
             if modo in ("si", "sí", "1", "true", "on"):
@@ -1886,6 +1979,9 @@ def encender_despertador() -> bool:
         if d.encender():
             DESPERTADOR = d
             print("  Voz: di 'Luna' en cualquier momento, sin abrir nada (escucha local)")
+            if d.transcribir_wav is not None:   # Whisper listo antes del primer pedido
+                print("  Oído fino: Whisper (" + WHISPER_MODELO + ") con tu vocabulario")
+                threading.Thread(target=lambda: cargar_whisper(), daemon=True).start()
             NOTIF.notificar("sistema", "Te escucho en segundo plano", "Di 'Luna' y tu pedido; el audio no sale del PC.")
             return True
     except Exception as e:

@@ -107,6 +107,11 @@
 
   #estado { margin-top:4px; font-family:var(--hud); font-size:.95rem; color:var(--halo); letter-spacing:.04em; min-height:1.3em; text-align:center; padding:0 12px; }
   body[data-estado="pensando"] #estado { color:var(--ambar); }
+  #subtitulo { min-height:1.4em; max-width:560px; margin:6px auto 0; padding:0 14px; text-align:center;
+               font-size:1.02rem; line-height:1.4; color:var(--texto, #e8eef8); opacity:.92; }
+  #subtitulo:empty { opacity:0; }
+  #subtitulo .provisional { opacity:.55; }
+  .b.u .via { display:block; font-size:.72rem; opacity:.6; margin-bottom:2px; }
 
   /* lecturas: rejilla con líneas de 1 px */
   .lecturas { display:grid; grid-template-columns:repeat(4, 1fr); gap:1px; width:min(520px, 94vw); margin:10px auto 0;
@@ -387,6 +392,7 @@
         </button>
       </div>
       <div id="estado" aria-live="polite">Conectando…</div>
+      <div id="subtitulo" aria-live="off"></div>
     </div>
     <div class="lecturas">
       <div><small>Cerebro</small><b id="tCerebro">—</b></div>
@@ -644,6 +650,19 @@ function teclear(d, texto) {
   raf = requestAnimationFrame(paso);
   setTimeout(fin, dur + 1500);  // si la pestaña se oculta y rAF se pausa, igual termina
 }
+// Subtítulo en vivo: lo que vas diciendo aparece escrito mientras hablas.
+function subtitulo(final, provisional = "") {
+  const el = $("subtitulo"); el.textContent = "";
+  if (final) el.append(document.createTextNode(final + (provisional ? " " : "")));
+  if (provisional) { const sp = document.createElement("span"); sp.className = "provisional"; sp.textContent = provisional; el.appendChild(sp); }
+}
+function burbujaOrigen(texto, via) {
+  if (terminarTecleo) terminarTecleo();
+  const d = document.createElement("div"); d.className = "b u";
+  const v = document.createElement("span"); v.className = "via"; v.textContent = via; d.appendChild(v);
+  d.appendChild(document.createTextNode(texto));
+  $("chat").appendChild(d); $("chat").scrollTop = $("chat").scrollHeight;
+}
 function ponerNombre(n) {
   nombre = n || "Asistente";
   document.title = nombre;
@@ -690,21 +709,39 @@ function decir(texto) {
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, continuo = false, escuchando = false, ocupado = false;
 
+const plano = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 function crearReconocedor() {
   if (!SR) return null;
   const r = new SR();
-  r.lang = "es-CO"; r.interimResults = false; r.maxAlternatives = 1; r.continuous = continuo;
+  // interimResults: el texto aparece mientras hablas; 3 alternativas para que Luna interprete mejor
+  r.lang = "es-CO"; r.interimResults = true; r.maxAlternatives = 3; r.continuous = continuo;
   r.onstart = () => { escuchando = true; continuo ? estado(`Di "${nombre}…"`) : estado("Escuchando…", "escuchando"); };
   r.onresult = e => {
-    const t = e.results[e.results.length - 1][0].transcript.trim();
-    if (!t) return;
-    if (!continuo) { enviar(t); return; }
-    const p = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-    const n = p(nombre), tp = p(t), i = tp.indexOf(n);
-    if (n && i !== -1 && i < 15) {
-      r.stop();
-      enviar(t.slice(i + n.length).replace(/^[\s,.:!¡¿?]+/, "") || "Hola");
+    let final = "", provisional = "", alternativas = [];
+    for (let k = e.resultIndex; k < e.results.length; k++) {
+      const res = e.results[k];
+      if (res.isFinal) {
+        final += res[0].transcript;
+        for (let j = 1; j < res.length; j++) alternativas.push(res[j].transcript.trim());
+      } else provisional += res[0].transcript;
     }
+    final = final.trim(); provisional = provisional.trim();
+    const n = plano(nombre);
+    if (!continuo) {
+      subtitulo(final, provisional);
+      if (final) { enviar(final, { voz: true, alternativas }); }
+      return;
+    }
+    // manos libres: solo se escribe y se envía lo que va después de su nombre
+    const vivo = (final || provisional), i = plano(vivo).indexOf(n);
+    if (n && i !== -1 && i < 15) subtitulo(vivo.slice(i + n.length).replace(/^[\s,.:!¡¿?]+/, ""));
+    if (!final) return;
+    const j = plano(final).indexOf(n);
+    if (n && j !== -1 && j < 15) {
+      r.stop();
+      const quitar = t => t.slice(Math.max(0, plano(t).indexOf(n)) + n.length).replace(/^[\s,.:!¡¿?]+/, "");
+      enviar(quitar(final) || "Hola", { voz: true, alternativas: alternativas.filter(a => plano(a).includes(n)).map(quitar) });
+    } else subtitulo("");
   };
   r.onerror = e => {
     if (e.error === "not-allowed" || e.error === "service-not-allowed") {
@@ -715,7 +752,7 @@ function crearReconocedor() {
   r.onend = () => {
     escuchando = false;
     if (continuo && !ocupado) setTimeout(escuchar, 300);
-    else if (!ocupado) reposo();
+    else if (!ocupado) { reposo(); }
   };
   return r;
 }
@@ -728,14 +765,16 @@ function escuchar() {
 function dejarDeEscuchar() { if (rec && escuchando) { try { rec.abort(); } catch (e) {} } }
 
 // ------------------------------------------------------------ conversación
-async function enviar(texto) {
+async function enviar(texto, opciones = {}) {
   texto = texto.trim(); if (!texto || ocupado) return;
   ocupado = true; dejarDeEscuchar();
-  burbuja(texto, "u");
+  subtitulo("");
+  if (opciones.voz) burbujaOrigen(texto, "🎙 dicho por ti"); else burbuja(texto, "u");
   estado("Pensando…", "pensando");
   const t0 = performance.now();
   try {
-    const d = await api("/api/chat", { texto, cliente });
+    const d = await api("/api/chat", { texto, cliente, voz: !!opciones.voz, alternativas: opciones.alternativas || [] });
+    if (d.ultimo_id) ultimoMensaje = Math.max(ultimoMensaje, d.ultimo_id);
     telemetria(d.cerebro, (performance.now() - t0) / 1000, d.degradado);
     if (d.asistente && d.asistente !== nombre) ponerNombre(d.asistente);
     burbuja(d.respuesta, "j");
@@ -757,6 +796,11 @@ $("nucleo").onclick = () => {
 };
 $("formulario").onsubmit = e => { e.preventDefault(); const t = $("entrada").value; $("entrada").value = ""; enviar(t); };
 $("manos").onchange = () => {
+  if ($("manos").checked && vozFondoActiva && enEstePC) {
+    $("manos").checked = false;
+    sistema("Ya te escucho en segundo plano: di Luna sin tocar nada", "aviso");
+    return;
+  }
   continuo = $("manos").checked;
   guardar("manos", continuo ? "1" : "0");
   dejarDeEscuchar();
@@ -1686,10 +1730,18 @@ reloj(); setInterval(reloj, 15000);
 api("/api/ajustes").then(a => telemetria(a.ultimo || a.cerebro)).catch(() => {});
 
 const pideManos = new URLSearchParams(location.search).get("manos") === "1" || leer("manos") === "1";
+const enEstePC = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
 api("/api/ping").then(async d => {
   enlace(true);
   ponerNombre(d.asistente);
-  if (pideManos && SR) {
+  let fondo = false;
+  try { fondo = enEstePC && !!(await api("/api/voz/vivo")).activo; } catch (e) {}
+  if (fondo) {
+    // El PC ya escucha "Luna" por su cuenta: la ventana no abre otro micrófono (respondería dos veces).
+    vozFondoActiva = true; $("manos").checked = false; continuo = false;
+    burbuja(`Hola${d.usuario ? ", " + d.usuario : ""}. Te escucho en segundo plano: di "${d.asistente}" y lo que necesites; lo que digas aparecerá escrito aquí.`, "j");
+    estado(`Di "${d.asistente}…" (te escucho en segundo plano)`);
+  } else if (pideManos && SR) {
     const saludo = `Estoy lista${d.usuario ? ", " + d.usuario : ""}. Di ${d.asistente} cuando me necesites.`;
     burbuja(saludo, "j");
     $("manos").checked = true; continuo = true; guardar("manos", "1");
@@ -1701,7 +1753,36 @@ api("/api/ping").then(async d => {
   }
 }).catch(e => { if (e instanceof TypeError) enlace(false); estado("Sin conexión con el PC"); });
 
+// Lo que se habla por la escucha en segundo plano (o desde el celular) también aparece aquí.
+let ultimoMensaje = -1, vozFondoActiva = false, ultimoEstadoVoz = "";
+async function leerMensajes() {
+  const d = await api("/api/mensajes?desde=" + ultimoMensaje);
+  if (ultimoMensaje < 0) { ultimoMensaje = d.ultimo || 0; return 2500; }
+  for (const m of d.mensajes || []) {
+    ultimoMensaje = Math.max(ultimoMensaje, m.id);
+    if (m.cliente === cliente) continue;       // lo de esta pantalla ya se mostró
+    const via = m.cliente === "voz" ? "🎙 dicho por ti (escucha en segundo plano)" : "desde otro dispositivo";
+    if (m.rol === "usuario") burbujaOrigen(m.contenido, via); else burbuja(m.contenido, "j");
+  }
+  return (d.mensajes || []).length ? 800 : 2500;
+}
+async function leerVozVivo() {
+  const v = await api("/api/voz/vivo");
+  vozFondoActiva = !!v.activo;
+  if (!v.activo) return 10000;
+  if (v.estado !== ultimoEstadoVoz) {
+    ultimoEstadoVoz = v.estado;
+    if (v.estado === "grabando") estado("Te escucho…", "escuchando");
+    else if (v.estado === "pensando") estado("Pensando…", "pensando");
+    else if (v.estado === "hablando") estado("Hablando…", "hablando");
+    else if (!ocupado) { estado(`Di "${nombre}…" (te escucho en segundo plano)`); subtitulo(""); }
+  }
+  if (v.estado === "grabando" || v.estado === "pensando") subtitulo("", v.parcial || "");
+  return v.estado === "escuchando" ? 1200 : 400;
+}
 sistema("Interfaz lista");
+sondear(leerMensajes, 2500);
+sondear(leerVozVivo, 1200);
 var sondeoInt = null;
 sondear(leerPc, 30000);
 sondeoInt = sondear(leerRecursos, 20000);

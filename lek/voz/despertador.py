@@ -249,6 +249,32 @@ class ReconocedorVosk:
         with contextlib.suppress(Exception):
             self._rec.Reset()
 
+    # ---- dictado en vivo: mientras hablas, el texto aparece en pantalla
+    def empezar_dictado(self) -> None:
+        self._dictado = self._vosk.KaldiRecognizer(self.modelo, self.tasa)
+        self._dictado_hecho = []
+
+    def dictar(self, pcm: bytes) -> str:
+        """Alimenta el dictado y devuelve lo entendido hasta ahora (frases cerradas + parcial)."""
+        d = getattr(self, "_dictado", None)
+        if d is None:
+            return ""
+        if d.AcceptWaveform(pcm):
+            t = json.loads(d.Result() or "{}").get("text", "").strip()
+            if t:
+                self._dictado_hecho.append(t)
+            parcial = ""
+        else:
+            parcial = json.loads(d.PartialResult() or "{}").get("partial", "").strip()
+        return " ".join([*self._dictado_hecho, parcial]).strip()
+
+    def fin_dictado(self) -> str:
+        d, self._dictado = getattr(self, "_dictado", None), None
+        if d is None:
+            return ""
+        t = json.loads(d.FinalResult() or "{}").get("text", "").strip()
+        return " ".join([*self._dictado_hecho, t]).strip()
+
     def transcribir(self, pcm: bytes) -> str:
         rec = self._vosk.KaldiRecognizer(self.modelo, self.tasa)
         paso = self.tasa  # medio segundo de audio de 16 bits
@@ -302,6 +328,8 @@ class Despertador:
         self._previo = collections.deque(maxlen=max(1, round(previo_s / BLOQUE_S)))
         self._grabacion: dict | None = None
         self._estado = "apagado"
+        self.parcial = ""                    # lo que va entendiendo mientras hablas (para la pantalla)
+        self._dictando = False
         self.activaciones = 0
         self.ignoradas = 0
         self.ultima_activacion: float | None = None
@@ -445,6 +473,14 @@ class Despertador:
         # lo dicho justo antes (incluye el nombre) por si el pedido vino seguido: "Luna, ¿qué hora es?"
         self._grabacion = {"bloques": list(self._previo), "tiempo": 0.0, "silencio": 0.0,
                            "voz": False, "saltar": self.tono_s if self.tono else 0.0}
+        self.parcial = ""
+        self._dictando = False
+        if hasattr(self._reconocedor, "empezar_dictado"):
+            with contextlib.suppress(Exception):
+                self._reconocedor.empezar_dictado()
+                self._dictando = True
+                for b in self._grabacion["bloques"]:
+                    self.parcial = quitar_nombre(self._reconocedor.dictar(b), self.nombre)
         self._previo.clear()
         if self.tono:
             with contextlib.suppress(Exception):
@@ -453,6 +489,9 @@ class Despertador:
     def _grabar(self, pcm: bytes) -> None:
         g = self._grabacion
         g["bloques"].append(pcm)
+        if self._dictando:
+            with contextlib.suppress(Exception):
+                self.parcial = quitar_nombre(self._reconocedor.dictar(pcm), self.nombre)
         dur = len(pcm) / 2 / TASA
         g["tiempo"] += dur
         if g["tiempo"] > g["saltar"] and rms(pcm) > self._umbral():  # el propio bip no cuenta como voz
@@ -471,13 +510,21 @@ class Despertador:
                 self._atender(audio)
 
     def _transcribir(self, pcm: bytes) -> str:
+        dictado = ""
+        if self._dictando:
+            self._dictando = False
+            with contextlib.suppress(Exception):
+                dictado = self._reconocedor.fin_dictado()
         if self.transcribir_wav is None:
-            return self._reconocedor.transcribir(pcm)
+            return dictado or self._reconocedor.transcribir(pcm)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(pcm_a_wav(pcm))
             ruta = f.name
         try:
-            return self.transcribir_wav(ruta)
+            return self.transcribir_wav(ruta) or dictado
+        except Exception as e:  # si Whisper falla, vale lo que entendió Vosk
+            self._registro(f"Whisper falló ({e}); uso la transcripción de Vosk.")
+            return dictado or self._reconocedor.transcribir(pcm)
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(ruta)
@@ -486,7 +533,7 @@ class Despertador:
         try:
             self._estado = "pensando"
             texto = quitar_nombre(self._transcribir(pcm), self.nombre)
-            self.ultimo_texto = texto
+            self.ultimo_texto = self.parcial = texto
             if not texto:  # falsa alarma o silencio: no molestar
                 self._registro("No escuché ningún pedido.")
                 return
@@ -521,6 +568,7 @@ class Despertador:
             "ignoradas_por_enfriamiento": self.ignoradas,
             "ultima_activacion": self.ultima_activacion,
             "ultimo_texto": self.ultimo_texto,
+            "parcial": self.parcial,
             "ultimo_error": self.ultimo_error,
             "umbral_voz": round(self._umbral(), 1),
         }
