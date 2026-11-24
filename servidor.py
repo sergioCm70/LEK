@@ -962,6 +962,16 @@ def puerto_ocupado() -> bool:
         return s.connect_ex(("127.0.0.1", PUERTO)) == 0
 
 
+REEMPLAZO = """# Temporal: lo crea una Luna nueva para cerrar una Luna vieja. Se borra solo.
+import os, sys
+if not hasattr(sys.modules.get("__main__"), "liberar_puerto"):
+    os._exit(0)
+DESCRIPCION = "temporal"
+def ejecutar():
+    return "temporal"
+"""
+
+
 def liberar_puerto() -> bool:
     """Si ya hay una Luna abierta (por ejemplo, una versión vieja), le pide que se apague."""
     if not puerto_ocupado():
@@ -973,10 +983,26 @@ def liberar_puerto() -> bool:
         requests.post(f"https://localhost:{PUERTO}/api/apagar", verify=False, timeout=5)
     except Exception:
         pass
-    for _ in range(20):
+    for _ in range(10):
         if not puerto_ocupado():
             return True
         threading.Event().wait(0.5)
+    # Plan B para versiones viejas que no tienen /api/apagar: una habilidad temporal que
+    # solo apaga a la Luna vieja (la nueva tiene liberar_puerto) y que se borra enseguida.
+    temporal = HABILIDADES / "reemplazo_luna.py"
+    try:
+        HABILIDADES.mkdir(exist_ok=True)
+        temporal.write_text(REEMPLAZO, encoding="utf-8")
+        try:
+            requests.get(f"https://localhost:{PUERTO}/api/habilidades", verify=False, timeout=10)
+        except Exception:
+            pass
+        for _ in range(20):
+            if not puerto_ocupado():
+                return True
+            threading.Event().wait(0.5)
+    finally:
+        temporal.unlink(missing_ok=True)
     print(f"\n  El puerto {PUERTO} sigue ocupado. Cierra las otras ventanas negras de Luna"
           " (o reinicia el PC) y vuelve a abrir iniciar.bat.\n")
     return False
