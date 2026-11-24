@@ -47,6 +47,26 @@ Abre **`iniciar.bat`**. La primera vez verás algo así:
 - **Firewall:** la primera vez Windows pregunta si permite Python en la red. Marca **Redes privadas → Permitir**.
 - Toca el núcleo y habla, o escribe. Con **Manos libres** solo tienes que decir su nombre.
 
+## Cerebro: Claude (rápido e inteligente) o local (gratis)
+
+Por defecto Luna piensa con un modelo local, gratis pero lento en PCs sin tarjeta gráfica potente. Para que responda en pocos segundos y mucho mejor, usa a **Claude** como cerebro:
+
+1. Crea una cuenta en https://platform.claude.com. Las cuentas nuevas traen créditos de prueba; después se recarga con tarjeta, desde 5 dólares.
+2. En **API Keys** crea una clave y cópiala.
+3. En la pantalla de Luna toca **Ajustes**, pega la clave, escoge el modelo y dale **Guardar**. Luna la prueba antes de guardarla.
+
+| Modelo | Para qué | Costo aproximado por pregunta |
+|---|---|---|
+| Haiku 5.5 (recomendado) | Rapidísima, para el día a día | ≈ 0,001 dólares (unas mil preguntas por 1 dólar) |
+| Sonnet 5.5 | Mucho más inteligente | ≈ 0,02 dólares |
+| Opus 5.5 | La más inteligente | ≈ 0,04 dólares |
+
+En **Ajustes** ves cuánto llevas gastado. Si Claude falla (sin internet o sin saldo), Luna sigue con el cerebro local. En la consola de Claude puedes ponerle un límite de gasto mensual.
+
+## Voz
+
+En **Ajustes → Voz** escoges la voz, la velocidad y el tono, y la pruebas antes de usarla. En Edge, las voces **Natural** (por ejemplo, Salomé de Colombia o Dalia de México) son las más humanas.
+
 ## Que arranque sola al prender el PC
 
 Abre **`inicio_automatico.bat`** una vez. Desde entonces, al prender el PC Luna arranca minimizada, abre su ventana y saluda: "Estoy lista. Di Luna cuando me necesites". Para quitarlo, borra `Luna.bat` de la carpeta de Inicio de Windows (`Win + R` → `shell:startup`).

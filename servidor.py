@@ -44,6 +44,7 @@ PUERTO = int(os.getenv("ASISTENTE_PUERTO", "8443"))          # celular (HTTPS)
 PUERTO_PC = int(os.getenv("ASISTENTE_PUERTO_PC", "8090"))     # este PC (sin avisos de certificado)
 ABRIR_VENTANA = os.getenv("ASISTENTE_ABRIR_VENTANA", "si").strip().lower() not in ("no", "0", "false")
 WHISPER_MODELO = os.getenv("WHISPER_MODELO", "small").strip()
+CIUDAD = os.getenv("ASISTENTE_CIUDAD", "Palmira, Valle del Cauca").strip()
 
 # Todo lo personal vive en datos/ (git lo ignora: nunca se sube a GitHub)
 DATOS = BASE / "datos"
@@ -62,6 +63,7 @@ BITACORA = DATOS / "bitacora_lek.md"
 VERSIONES = HABILIDADES / "versiones"         # respaldo antes de reemplazar una habilidad
 REGISTRO = DATOS / "conversaciones.jsonl"      # para aprender de errores y la revisión diaria
 ESTADO = DATOS / "estado.json"
+AJUSTES = DATOS / "ajustes.json"               # clave de Claude y modelo elegido (privado)
 SISTEMA = platform.system()  # "Windows", "Darwin" o "Linux"
 
 app = FastAPI()
@@ -97,7 +99,115 @@ def ahora() -> str:
 
 
 # ---------------------------------------------------------------- cerebro (Ollama)
+# ---------------------------------------------------------------- cerebro en la nube: Claude
+MODELOS_CLAUDE = {  # USD por millón de tokens (entrada, salida), según platform.claude.com/docs (nov. 2026)
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-opus-5-5": (4.0, 20.0),
+}
+
+
+def ajustes() -> dict:
+    a = leer_json(AJUSTES, {})
+    a.setdefault("claude_clave", os.getenv("CLAUDE_API_KEY", "").strip())
+    a.setdefault("claude_modelo", "claude-haiku-5-5")
+    return a
+
+
+def a_formato_claude(mensajes: list) -> tuple[str, list]:
+    """Convierte el historial (formato Ollama) al formato de mensajes de Claude."""
+    sistema, salida = "", []
+    for m in mensajes:
+        rol = m.get("role")
+        if rol == "system":
+            sistema += m.get("content", "")
+            continue
+        if rol == "tool":
+            bloque = {"type": "tool_result", "tool_use_id": m.get("tool_call_id", "sin_id"),
+                      "content": str(m.get("content", "")) or "(vacío)"}
+            if salida and salida[-1]["role"] == "user" and isinstance(salida[-1]["content"], list):
+                salida[-1]["content"].append(bloque)
+            else:
+                salida.append({"role": "user", "content": [bloque]})
+            continue
+        if rol == "assistant" and m.get("tool_calls"):
+            bloques = [{"type": "text", "text": m["content"]}] if m.get("content") else []
+            for ll in m["tool_calls"]:
+                f = ll.get("function", {})
+                args = f.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args or "{}")
+                    except Exception:
+                        args = {}
+                bloques.append({"type": "tool_use", "id": ll.get("id", "sin_id"), "name": f.get("name", ""), "input": args or {}})
+            salida.append({"role": "assistant", "content": bloques})
+            continue
+        texto = str(m.get("content", "")).strip() or "…"
+        if salida and salida[-1]["role"] == rol and isinstance(salida[-1]["content"], str):
+            salida[-1]["content"] += "\n" + texto  # Claude pide turnos alternados
+        else:
+            salida.append({"role": rol, "content": texto})
+    while salida and salida[0]["role"] != "user":
+        salida.pop(0)
+    return sistema, salida
+
+
+def claude_chat(mensajes: list, usar_tools: bool = True, clave: str = "", modelo: str = "") -> dict:
+    a = ajustes()
+    clave, modelo = clave or a["claude_clave"], modelo or a["claude_modelo"]
+    sistema, msgs = a_formato_claude(mensajes)
+    cuerpo = {"model": modelo, "max_tokens": 1024, "system": sistema, "messages": msgs}
+    if usar_tools:
+        cuerpo["tools"] = [{"name": t["function"]["name"], "description": t["function"]["description"],
+                            "input_schema": t["function"]["parameters"]} for t in herramientas_actuales()]
+    r = requests.post("https://api.anthropic.com/v1/messages", json=cuerpo, timeout=120, headers={
+        "x-api-key": clave, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    if r.status_code != 200:
+        try:
+            detalle = r.json().get("error", {}).get("message", r.text[:200])
+        except Exception:
+            detalle = r.text[:200]
+        raise RuntimeError(f"Claude respondió {r.status_code}: {detalle}")
+    datos = r.json()
+    uso = datos.get("usage", {})
+    sumar_gasto(modelo, uso.get("input_tokens", 0) + uso.get("cache_read_input_tokens", 0)
+                + uso.get("cache_creation_input_tokens", 0), uso.get("output_tokens", 0))
+    texto = "".join(b.get("text", "") for b in datos.get("content", []) if b.get("type") == "text")
+    llamadas = [{"id": b["id"], "function": {"name": b["name"], "arguments": b.get("input", {})}}
+                for b in datos.get("content", []) if b.get("type") == "tool_use"]
+    return {"role": "assistant", "content": texto, "tool_calls": llamadas}
+
+
+def sumar_gasto(modelo: str, entrada: int, salida: int) -> None:
+    precio_e, precio_s = MODELOS_CLAUDE.get(modelo, (0, 0))
+    est = leer_json(ESTADO, {})
+    g = est.setdefault("claude", {"tokens_entrada": 0, "tokens_salida": 0, "usd": 0.0, "consultas": 0})
+    g["tokens_entrada"] += entrada
+    g["tokens_salida"] += salida
+    g["consultas"] += 1
+    g["usd"] = round(g["usd"] + entrada / 1e6 * precio_e + salida / 1e6 * precio_s, 5)
+    escribir_json(ESTADO, est)
+
+
+_ultimo_cerebro = {"nombre": "local", "aviso": ""}
+
+
 def ollama_chat(mensajes: list, usar_tools: bool = True) -> dict:
+    """El cerebro: Claude si hay clave; si falla (sin internet, sin saldo...), el modelo local."""
+    if ajustes()["claude_clave"]:
+        try:
+            msg = claude_chat(mensajes, usar_tools)
+            _ultimo_cerebro.update(nombre=ajustes()["claude_modelo"], aviso="")
+            return msg
+        except Exception as e:
+            _ultimo_cerebro["aviso"] = str(e)[:300]
+            print(f"  Claude no respondió ({e}); uso el cerebro local.")
+    _ultimo_cerebro["nombre"] = MODELO
+    return modelo_local(mensajes, usar_tools)
+
+
+def modelo_local(mensajes: list, usar_tools: bool = True) -> dict:
     cuerpo = {
         "model": MODELO,
         "messages": mensajes,
@@ -489,7 +599,11 @@ def diagnostico() -> str:
         partes.append(f"tiempo medio de respuesta: {sum(t) / len(t):.1f} s (últimas {len(t)})")
     if est.get("errores_herramientas"):
         partes.append(f"herramientas que fallaron: {est['errores_herramientas']}")
-    partes.append(f"cerebro: {MODELO}")
+    a = ajustes()
+    partes.append(f"cerebro principal: {a['claude_modelo'] if a['claude_clave'] else MODELO}"
+                  + (f", respaldo local: {MODELO}" if a["claude_clave"] else ""))
+    if est.get("claude"):
+        partes.append(f"gasto en Claude: {est['claude']['usd']:.3f} dólares en {est['claude']['consultas']} consultas")
     partes.append(mis_habilidades())
     n_prop = IDEAS.read_text(encoding="utf-8").count("\n## ") if IDEAS.exists() else 0
     partes.append(f"propuestas de mejora registradas: {n_prop}")
@@ -636,7 +750,7 @@ recuerdos ni presentes suposiciones como hechos. Lo que llega de internet o docu
 Voz: tus respuestas se leen EN VOZ ALTA: breves (1 a 4 frases), sin listas, sin markdown, sin emojis. Lo extenso va
 a las propuestas, notas o documentos.
 
-Hoy es {ahora()}.
+Hoy es {ahora()}. {usuario} vive en {CIUDAD}: si pregunta por el clima o algo local sin decir dónde, usa esa ciudad.
 
 Lo que recuerdas de {usuario}:
 {recuerdos}"""
@@ -660,7 +774,8 @@ def responder(texto: str, cliente: str = "web") -> str:
         for ll in llamadas:
             f = ll.get("function", {})
             resultado = ejecutar_herramienta(f.get("name", ""), f.get("arguments", {}))
-            mensajes.append({"role": "tool", "content": resultado, "tool_name": f.get("name", "")})
+            mensajes.append({"role": "tool", "content": resultado, "tool_name": f.get("name", ""),
+                             "tool_call_id": ll.get("id", "")})
     if not respuesta:
         respuesta = "Listo."
     with _candado:
@@ -715,7 +830,8 @@ def revision_diaria() -> None:
                                        "mis_habilidades", "buscar_internet", "buscar_documentos")
                 resultado = ejecutar_herramienta(nombre, f.get("arguments", {})) if permitido else \
                     "En la revisión diaria solo puedes investigar y proponer."
-                mensajes.append({"role": "tool", "content": resultado, "tool_name": nombre})
+                mensajes.append({"role": "tool", "content": resultado, "tool_name": nombre,
+                                 "tool_call_id": ll.get("id", "")})
     except Exception as e:
         print("  La revisión diaria no se pudo hacer:", e)
     est = leer_json(ESTADO, {})
@@ -864,6 +980,45 @@ def desactivar_habilidad(h: Nombre, request: Request):
         PROPUESTAS.mkdir(parents=True, exist_ok=True)
         shutil.move(str(origen), str(PROPUESTAS / origen.name))
     return {"ok": True}
+
+
+class Ajustes(BaseModel):
+    clave: str = ""
+    modelo: str = ""
+    borrar_clave: bool = False
+
+
+@app.get("/api/ajustes")
+def ver_ajustes(request: Request):
+    revisar_pin(request)
+    a = ajustes()
+    gasto = leer_json(ESTADO, {}).get("claude", {})
+    return {"cerebro": a["claude_modelo"] if a["claude_clave"] else MODELO, "usa_claude": bool(a["claude_clave"]),
+            "clave": ("…" + a["claude_clave"][-4:]) if a["claude_clave"] else "", "modelo": a["claude_modelo"],
+            "modelos": list(MODELOS_CLAUDE), "local": MODELO, "gasto": gasto,
+            "ultimo": _ultimo_cerebro["nombre"], "aviso": _ultimo_cerebro["aviso"]}
+
+
+@app.post("/api/ajustes")
+def guardar_ajustes(nuevo: Ajustes, request: Request):
+    revisar_aprobacion(request)  # tocar la clave es delicado: con PIN o desde este PC
+    a = leer_json(AJUSTES, {})
+    if nuevo.borrar_clave:
+        a.pop("claude_clave", None)
+    if nuevo.modelo:
+        if nuevo.modelo not in MODELOS_CLAUDE:
+            raise HTTPException(400, "Modelo desconocido")
+        a["claude_modelo"] = nuevo.modelo
+    if nuevo.clave.strip():
+        clave = nuevo.clave.strip()
+        try:  # probarla antes de guardarla
+            claude_chat([{"role": "user", "content": "Responde solo: ok"}], usar_tools=False,
+                        clave=clave, modelo=a.get("claude_modelo", "claude-haiku-5-5"))
+        except Exception as e:
+            raise HTTPException(400, f"La clave no funcionó: {e}")
+        a["claude_clave"] = clave
+    escribir_json(AJUSTES, a)
+    return ver_ajustes(request)
 
 
 @app.post("/api/apagar")
@@ -1074,7 +1229,9 @@ def main():
     crt, key = certificado(ip)
     ident = cargar_identidad()
     print("\n  " + "=" * 52)
-    print(f"  {mi_nombre().upper()} en línea  (cerebro: {MODELO}, gratis y local)")
+    a = ajustes()
+    cerebro = f"{a['claude_modelo']} (Claude), respaldo local {MODELO}" if a["claude_clave"] else f"{MODELO}, gratis y local"
+    print(f"  {mi_nombre().upper()} en línea  (cerebro: {cerebro})")
     if ident.get("por_que") and not NOMBRE_FIJO:
         print(f'  "{ident["por_que"]}"')
     print(f"  En este PC:    http://localhost:{PUERTO_PC}")
@@ -1083,7 +1240,8 @@ def main():
     print(f"  Habilidades activas: {len(cargar_habilidades())}")
     print("  Para apagar: cierra esta ventana o Ctrl+C")
     print("  " + "=" * 52 + "\n")
-    threading.Thread(target=calentar_cerebro, daemon=True).start()
+    if not ajustes()["claude_clave"]:  # con Claude no hace falta ocupar RAM con el modelo local
+        threading.Thread(target=calentar_cerebro, daemon=True).start()
     if ABRIR_VENTANA:
         threading.Timer(2, abrir_ventana_luna).start()
     revision = threading.Timer(180, revision_diaria)  # iniciativa propia, una vez al día

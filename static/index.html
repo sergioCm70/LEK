@@ -57,6 +57,11 @@
   .hab button { border:none; border-radius:9px; padding:7px 13px; cursor:pointer; font-size:.88rem; }
   .ok { background:var(--cian2); color:#fff; } .no { background:#2a1620; color:#ff9aa8; } .neutro { background:#16233b; color:var(--texto); }
   #ideas { white-space:pre-wrap; color:var(--tenue); font-size:.88rem; }
+  #ajustes select, #ajustes input[type=password] { width:100%; background:#03060c; border:1px solid var(--linea); color:var(--texto); border-radius:9px; padding:9px; font-size:.92rem; margin:4px 0 8px; }
+  #ajustes label.fila { display:block; color:var(--tenue); font-size:.85rem; margin-top:6px; }
+  #ajustes input[type=range] { width:100%; }
+  #ajustes .dato { color:var(--tenue); font-size:.86rem; line-height:1.5; }
+  #ajustes .dato b { color:var(--texto); font-weight:500; }
 </style>
 </head>
 <body>
@@ -75,7 +80,7 @@
   </form>
   <div class="opciones">
     <label><input type="checkbox" id="manos"> <span id="manosTexto">Manos libres (di su nombre)</span></label>
-    <span><label style="display:inline-flex"><input type="checkbox" id="voz" checked> Voz</label> · <a id="verHab">Habilidades</a> · <a id="nueva">Nueva conversación</a></span>
+    <span><label style="display:inline-flex"><input type="checkbox" id="voz" checked> Voz</label> · <a id="verAjustes">Ajustes</a> · <a id="verHab">Habilidades</a> · <a id="nueva">Nueva conversación</a></span>
   </div>
 </footer>
 
@@ -86,6 +91,33 @@
   <h2>Esperando tu aprobación</h2><div id="propuestas"></div>
   <h2>Activas</h2><div id="activas"></div>
   <h2>Propuestas de mejora (para ella y para LEK)</h2><div id="ideas"></div>
+</div></div>
+
+<div id="ajustes" class="panelx" style="position:fixed;inset:0;background:#05080fee;display:none;overflow-y:auto;padding:18px 14px 40px;z-index:6"><div class="caja" style="max-width:720px;margin:0 auto">
+  <button class="cerrar" id="cerrarAjustes" style="float:right;background:none;border:1px solid var(--linea);color:var(--texto);border-radius:10px;padding:6px 12px;cursor:pointer">Cerrar</button>
+  <h2 style="font-weight:400;font-size:1.05rem;color:var(--cian);letter-spacing:.08em;margin:18px 0 8px">CEREBRO</h2>
+  <div class="hab">
+    <div class="dato" id="estadoCerebro">Cargando…</div>
+    <label class="fila">Modelo de Claude</label>
+    <select id="modeloClaude">
+      <option value="claude-haiku-5-5">Haiku 5.5: rapidísima y muy barata (recomendado)</option>
+      <option value="claude-sonnet-5-5">Sonnet 5.5: mucho más inteligente, unas 20 veces más cara</option>
+      <option value="claude-opus-5-5">Opus 5.5: la más inteligente, unas 40 veces más cara</option>
+    </select>
+    <label class="fila">Clave de la API de Claude (empieza por sk-ant-)</label>
+    <input type="password" id="claveClaude" placeholder="Pega aquí tu clave" autocomplete="off">
+    <div class="botones"><button class="ok" id="guardarCerebro">Guardar</button><button class="no" id="quitarClave">Quitar clave (usar solo el local)</button></div>
+    <div class="dato" style="margin-top:8px">La clave se guarda solo en este PC (carpeta datos). Si Claude falla o se acaba el saldo, Luna sigue con su cerebro local.</div>
+  </div>
+  <h2 style="font-weight:400;font-size:1.05rem;color:var(--cian);letter-spacing:.08em;margin:18px 0 8px">VOZ</h2>
+  <div class="hab">
+    <label class="fila">Voz de Luna en este dispositivo</label>
+    <select id="selVoz"></select>
+    <label class="fila">Velocidad: <span id="vVel"></span></label><input type="range" id="velVoz" min="0.7" max="1.5" step="0.05">
+    <label class="fila">Tono: <span id="vTono"></span></label><input type="range" id="tonoVoz" min="0.6" max="1.5" step="0.05">
+    <div class="botones"><button class="neutro" id="probarVoz">Probar</button><button class="ok" id="guardarVoz">Usar esta voz</button></div>
+    <div class="dato" style="margin-top:8px">Las voces que dicen <b>Natural</b> u <b>Online</b> (en Edge) son las más humanas. Cada dispositivo tiene sus propias voces.</div>
+  </div>
 </div></div>
 
 <script>
@@ -138,7 +170,10 @@ function reposo() {
 // ------------------------------------------------------------ voz (hablar)
 let vozES = null;
 function elegirVoz() {
-  const vs = speechSynthesis.getVoices().filter(v => v.lang && v.lang.toLowerCase().startsWith("es"));
+  const todas = speechSynthesis.getVoices();
+  const elegida = leer("voz") && todas.find(v => v.name === leer("voz"));
+  if (elegida) { vozES = elegida; return; }
+  const vs = todas.filter(v => v.lang && v.lang.toLowerCase().startsWith("es"));
   const mujer = /helena|sabina|laura|elvira|paloma|dalia|salome|salomé|paulina|m[oó]nica|luc[ií]a|elena|ximena|camila|female|mujer|google/i;
   const buena = /natural|online|neural|premium|enhanced/i;
   vozES = vs.find(v => mujer.test(v.name) && buena.test(v.name))
@@ -154,7 +189,7 @@ function decir(texto) {
     const u = new SpeechSynthesisUtterance(texto);
     u.lang = vozES ? vozES.lang : "es-CO";
     if (vozES) u.voice = vozES;
-    u.rate = 1.05; u.pitch = 1.05;
+    u.rate = parseFloat(leer("vel") || "1.05"); u.pitch = parseFloat(leer("tono") || "1.05");
     let terminado = false;
     const fin = () => { if (!terminado) { terminado = true; listo(); } };
     u.onend = fin; u.onerror = fin;
@@ -284,6 +319,58 @@ async function cargarPanel() {
 }
 $("verHab").onclick = () => { $("panel").classList.add("abierto"); cargarPanel(); };
 $("cerrarPanel").onclick = () => $("panel").classList.remove("abierto");
+
+// ------------------------------------------------------------ ajustes: cerebro y voz
+async function cargarAjustes() {
+  try {
+    const a = await api("/api/ajustes");
+    const g = a.gasto || {};
+    $("estadoCerebro").innerHTML = "";
+    const lineas = [
+      ["Cerebro principal", a.usa_claude ? `Claude (${a.modelo})` : `local (${a.local}), gratis pero lento`],
+      ["Respaldo", a.usa_claude ? `local (${a.local})` : "—"],
+      ["Clave", a.clave || "sin clave"],
+      ["Gasto en Claude", g.consultas ? `US$ ${(g.usd || 0).toFixed(3)} en ${g.consultas} consultas` : "US$ 0"],
+    ];
+    if (a.aviso) lineas.push(["Último problema con Claude", a.aviso]);
+    for (const [k, v] of lineas) { const d = document.createElement("div"); const b = document.createElement("b"); b.textContent = k + ": "; d.appendChild(b); d.appendChild(document.createTextNode(v)); $("estadoCerebro").appendChild(d); }
+    $("modeloClaude").value = a.modelo;
+  } catch (e) { $("estadoCerebro").textContent = "No pude leer los ajustes."; }
+}
+async function guardarCerebro(cuerpo) {
+  $("estadoCerebro").textContent = "Probando…";
+  try { await api("/api/ajustes", cuerpo); $("claveClaude").value = ""; }
+  catch (e) { alert(e.message.includes("403") || e.message.includes("PIN") ? "Para cambiar esto desde el celular, ponle un PIN a Luna." : "No se pudo: " + e.message); }
+  cargarAjustes();
+}
+$("guardarCerebro").onclick = () => guardarCerebro({ clave: $("claveClaude").value, modelo: $("modeloClaude").value });
+$("quitarClave").onclick = () => { if (confirm("¿Quitar la clave? Luna quedará solo con el cerebro local.")) guardarCerebro({ borrar_clave: true }); };
+function llenarVoces() {
+  const vs = speechSynthesis.getVoices().slice().sort((a, b) => (b.lang.startsWith("es") - a.lang.startsWith("es")) || a.name.localeCompare(b.name));
+  $("selVoz").innerHTML = "";
+  for (const v of vs) { const o = document.createElement("option"); o.value = v.name; o.textContent = `${v.name} (${v.lang})`; $("selVoz").appendChild(o); }
+  if (vozES) $("selVoz").value = vozES.name;
+}
+function mostrarRangos() { $("vVel").textContent = $("velVoz").value; $("vTono").textContent = $("tonoVoz").value; }
+$("velVoz").oninput = $("tonoVoz").oninput = mostrarRangos;
+$("probarVoz").onclick = () => {
+  const v = speechSynthesis.getVoices().find(x => x.name === $("selVoz").value);
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(`Hola, soy ${nombre || "Luna"}. Así sonaría mi voz.`);
+  if (v) { u.voice = v; u.lang = v.lang; }
+  u.rate = parseFloat($("velVoz").value); u.pitch = parseFloat($("tonoVoz").value);
+  speechSynthesis.speak(u);
+};
+$("guardarVoz").onclick = () => {
+  guardar("voz", $("selVoz").value); guardar("vel", $("velVoz").value); guardar("tono", $("tonoVoz").value);
+  elegirVoz(); decir("Listo, esta es mi nueva voz.");
+};
+$("verAjustes").onclick = () => {
+  $("ajustes").style.display = "block";
+  $("velVoz").value = leer("vel") || "1.05"; $("tonoVoz").value = leer("tono") || "1.05"; mostrarRangos();
+  llenarVoces(); cargarAjustes();
+};
+$("cerrarAjustes").onclick = () => $("ajustes").style.display = "none";
 
 const pideManos = new URLSearchParams(location.search).get("manos") === "1" || leer("manos") === "1";
 api("/api/ping").then(async d => {
