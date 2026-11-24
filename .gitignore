@@ -1,5 +1,6 @@
 # Privado: nunca a GitHub
 .env
+datos/secretos.json
 datos/
 conocimiento/*
 !conocimiento/LEEME.txt

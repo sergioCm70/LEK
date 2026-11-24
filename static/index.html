@@ -55,13 +55,21 @@
   .hab summary { cursor:pointer; color:var(--tenue); font-size:.82rem; }
   .hab .botones { display:flex; gap:8px; margin-top:8px; }
   .hab button { border:none; border-radius:9px; padding:7px 13px; cursor:pointer; font-size:.88rem; }
+  h2.tit { font-weight:400; font-size:1.05rem; color:var(--cian); letter-spacing:.08em; margin:18px 0 8px; }
   .ok { background:var(--cian2); color:#fff; } .no { background:#2a1620; color:#ff9aa8; } .neutro { background:#16233b; color:var(--texto); }
   #ideas { white-space:pre-wrap; color:var(--tenue); font-size:.88rem; }
-  #ajustes select, #ajustes input[type=password] { width:100%; background:#03060c; border:1px solid var(--linea); color:var(--texto); border-radius:9px; padding:9px; font-size:.92rem; margin:4px 0 8px; }
-  #ajustes label.fila { display:block; color:var(--tenue); font-size:.85rem; margin-top:6px; }
+  #ajustes select, #intel select, #ajustes input[type=password] { width:100%; background:#03060c; border:1px solid var(--linea); color:var(--texto); border-radius:9px; padding:9px; font-size:.92rem; margin:4px 0 8px; }
+  #ajustes label.fila, #intel label.fila { display:block; color:var(--tenue); font-size:.85rem; margin-top:6px; }
   #ajustes input[type=range] { width:100%; }
-  #ajustes .dato { color:var(--tenue); font-size:.86rem; line-height:1.5; }
-  #ajustes .dato b { color:var(--texto); font-weight:500; }
+  #ajustes .dato, #intel .dato { color:var(--tenue); font-size:.86rem; line-height:1.5; }
+  #ajustes .dato b, #intel .dato b { color:var(--texto); font-weight:500; }
+  .chip { display:inline-block; font-size:.75rem; padding:2px 8px; border-radius:20px; margin-left:6px; border:1px solid var(--linea); color:var(--tenue); }
+  .chip.sano { color:#6fe0a8; border-color:#245c43; } .chip.pausado, .chip.sin-clave { color:#ff9aa8; border-color:#5c2430; }
+  .chip.degradado { color:var(--ambar); border-color:#5c4524; } .chip.activo { color:var(--cian); border-color:var(--cian2); }
+  .fila2 { display:flex; gap:10px; flex-wrap:wrap; } .fila2 > div { flex:1; min-width:150px; }
+  .aviso { align-self:flex-start; font-size:.8rem; color:var(--ambar); padding:0 4px; }
+  table.mini { width:100%; border-collapse:collapse; font-size:.82rem; color:var(--tenue); }
+  table.mini td { padding:4px 6px; border-top:1px solid var(--linea); }
 </style>
 </head>
 <body>
@@ -80,7 +88,7 @@
   </form>
   <div class="opciones">
     <label><input type="checkbox" id="manos"> <span id="manosTexto">Manos libres (di su nombre)</span></label>
-    <span><label style="display:inline-flex"><input type="checkbox" id="voz" checked> Voz</label> · <a id="verAjustes">Ajustes</a> · <a id="verHab">Habilidades</a> · <a id="nueva">Nueva conversación</a></span>
+    <span><label style="display:inline-flex"><input type="checkbox" id="voz" checked> Voz</label> · <a id="verInt">Inteligencia</a> · <a id="verAjustes">Ajustes</a> · <a id="verHab">Habilidades</a> · <a id="nueva">Nueva conversación</a></span>
   </div>
 </footer>
 
@@ -118,6 +126,32 @@
     <div class="botones"><button class="neutro" id="probarVoz">Probar</button><button class="ok" id="guardarVoz">Usar esta voz</button></div>
     <div class="dato" style="margin-top:8px">Las voces que dicen <b>Natural</b> u <b>Online</b> (en Edge) son las más humanas. Cada dispositivo tiene sus propias voces.</div>
   </div>
+</div></div>
+
+<div id="intel" style="position:fixed;inset:0;background:#05080fee;display:none;overflow-y:auto;padding:18px 14px 40px;z-index:7"><div class="caja" style="max-width:720px;margin:0 auto">
+  <button id="cerrarInt" style="float:right;background:none;border:1px solid var(--linea);color:var(--texto);border-radius:10px;padding:6px 12px;cursor:pointer">Cerrar</button>
+  <h2 class="tit">Inteligencia</h2>
+  <div class="hab"><div class="dato" id="intActivo">Cargando…</div></div>
+  <h2 class="tit">Modelos</h2>
+  <div id="intModelos"></div>
+  <h2 class="tit">Selección</h2>
+  <div class="hab">
+    <div class="fila2">
+      <div><label class="fila">Cerebro principal</label><select id="intPrincipal"></select></div>
+      <div><label class="fila">Respaldo (local, funciona sin internet)</label><select id="intRespaldo"></select></div>
+    </div>
+    <label class="fila">Modo</label>
+    <select id="intModo"><option value="fijo">Manual: siempre el principal, y el respaldo si falla</option><option value="auto" disabled>Automático: Luna elige por tarea (llega en la fase 2)</option></select>
+    <label class="fila">Tope de gasto en la nube por mes (dólares)</label>
+    <input type="number" id="intTope" min="0" step="0.5" style="width:100%;background:#03060c;border:1px solid var(--linea);color:var(--texto);border-radius:9px;padding:9px">
+    <div class="botones"><button class="ok" id="intGuardar">Guardar selección</button></div>
+  </div>
+  <h2 class="tit">Privacidad</h2>
+  <div class="hab" id="intPriv"></div>
+  <h2 class="tit">Recursos del PC</h2>
+  <div class="hab"><div class="dato" id="intRecursos">Midiendo…</div></div>
+  <h2 class="tit">Historial de cambios de modelo</h2>
+  <div class="hab"><table class="mini" id="intCambios"></table></div>
 </div></div>
 
 <script>
@@ -250,6 +284,7 @@ async function enviar(texto) {
     const d = await api("/api/chat", { texto, cliente });
     if (d.asistente && d.asistente !== nombre) ponerNombre(d.asistente);
     burbuja(d.respuesta, "j");
+    if (d.degradado && d.aviso) burbuja("⚠ " + d.aviso, "aviso");
     await decir(d.respuesta);
   } catch (e) {
     burbuja("No logro conectarme con el PC. ¿Está encendido el programa?", "j");
@@ -371,6 +406,87 @@ $("verAjustes").onclick = () => {
   llenarVoces(); cargarAjustes();
 };
 $("cerrarAjustes").onclick = () => $("ajustes").style.display = "none";
+
+// ------------------------------------------------------------ panel de inteligencia
+const CLASES = { memoria: "Memoria", notas: "Notas", documentos: "Documentos", conversacion: "Conversación" };
+function linea(padre, etiqueta, valor) {
+  const d = document.createElement("div"); const b = document.createElement("b");
+  b.textContent = etiqueta + ": "; d.appendChild(b); d.appendChild(document.createTextNode(valor)); padre.appendChild(d);
+}
+function chip(texto, clase) { const c = document.createElement("span"); c.className = "chip " + (clase || ""); c.textContent = texto; return c; }
+async function cargarInteligencia() {
+  let d;
+  try { d = await api("/api/inteligencia"); } catch (e) { $("intActivo").textContent = "No pude leer el estado de la inteligencia."; return; }
+  const a = d.activo, act = $("intActivo"); act.innerHTML = "";
+  linea(act, "Modelo activo", a.modelo || "ninguno todavía");
+  linea(act, "Proveedor", a.proveedor || "—");
+  linea(act, "Motivo de la selección", a.motivo || "—");
+  linea(act, "Gasto en la nube este mes", `US$ ${d.gasto_mes_usd} de ${d.presupuesto_mensual_usd}`);
+  if (a.aviso) { const w = document.createElement("div"); w.style.color = "var(--ambar)"; w.textContent = "⚠ " + a.aviso; act.appendChild(w); }
+  const cont = $("intModelos"); cont.innerHTML = "";
+  for (const m of d.modelos) {
+    const h = document.createElement("div"); h.className = "hab";
+    const t = document.createElement("b"); t.textContent = m.nombre; h.appendChild(t);
+    h.appendChild(chip(m.ubicacion === "local" ? "en el PC" : "nube"));
+    h.appendChild(chip(m.estado, m.estado.replace(" ", "-")));
+    if (m.es_principal) h.appendChild(chip("principal", "activo"));
+    if (m.es_respaldo) h.appendChild(chip("respaldo", "activo"));
+    const p = document.createElement("p"); p.textContent = m.nota; h.appendChild(p);
+    const det = document.createElement("div"); det.className = "dato";
+    const partes = [];
+    if (m.llamadas_30d) partes.push(`${m.llamadas_30d} llamadas en 30 días`, `${m.exito_30d} % exitosas`);
+    if (m.latencia_media_s) partes.push(`${m.latencia_media_s} s de media`);
+    if (m.usd_30d) partes.push(`US$ ${m.usd_30d}`);
+    if (m.en_memoria) partes.push(`cargado: ${m.en_memoria.ram_gb} GB (${m.en_memoria.en_gpu_gb} GB en GPU)`);
+    if (m.ultimo_error) partes.push(`último error: ${m.ultimo_error}`);
+    det.textContent = partes.join(" — ") || "Sin uso todavía";
+    h.appendChild(det);
+    if (m.estado === "pausado") {
+      const b = document.createElement("div"); b.className = "botones";
+      const x = document.createElement("button"); x.className = "neutro"; x.textContent = "Volver a intentar";
+      x.onclick = async () => { await api("/api/inteligencia", { reactivar: m.id }).catch(() => {}); cargarInteligencia(); };
+      b.appendChild(x); h.appendChild(b);
+    }
+    cont.appendChild(h);
+  }
+  const llenar = (sel, lista, valor) => { sel.innerHTML = ""; for (const m of lista) { const o = document.createElement("option"); o.value = m.id; o.textContent = m.nombre; sel.appendChild(o); } sel.value = valor; };
+  llenar($("intPrincipal"), d.modelos, d.principal);
+  llenar($("intRespaldo"), d.modelos.filter(m => m.ubicacion === "local"), d.respaldo);
+  $("intModo").value = d.modo; $("intTope").value = d.presupuesto_mensual_usd;
+  const pv = $("intPriv"); pv.innerHTML = "";
+  for (const [clase, nombreClase] of Object.entries(CLASES)) {
+    const fila = document.createElement("label"); fila.className = "fila"; fila.textContent = nombreClase;
+    const sel = document.createElement("select");
+    for (const [v, txt] of [["local", "Solo en este PC"], ["nube", "Puede ir a la nube"]]) { const o = document.createElement("option"); o.value = v; o.textContent = txt; sel.appendChild(o); }
+    sel.value = d.privacidad[clase];
+    sel.onchange = async () => {
+      try { await api("/api/inteligencia", { privacidad: { [clase]: sel.value } }); }
+      catch (e) { alert("Para cambiar esto desde el celular, ponle un PIN a Luna."); }
+      cargarInteligencia();
+    };
+    pv.appendChild(fila); pv.appendChild(sel);
+  }
+  const r = d.recursos, rc = $("intRecursos"); rc.innerHTML = "";
+  if (r.ram_total_gb) linea(rc, "RAM", `${r.ram_libre_gb} de ${r.ram_total_gb} GB libres (${r.ram_uso_pct} % en uso)`);
+  linea(rc, "GPU", r.gpu ? `${r.gpu.nombre}, ${r.gpu.vram_total_gb} GB de VRAM (${r.gpu.vram_usada_gb} GB en uso)` : "no se detectó una GPU NVIDIA");
+  linea(rc, "Modelos cargados en Ollama", r.ollama_cargados.length ? r.ollama_cargados.map(c => `${c.modelo} (${c.tam_gb} GB, ${c.en_gpu_gb} GB en GPU)`).join(", ") : "ninguno ahora");
+  if (r.disco_libre_gb !== undefined) linea(rc, "Disco libre", `${r.disco_libre_gb} GB`);
+  const tb = $("intCambios"); tb.innerHTML = "";
+  if (!d.cambios.length) { const tr = tb.insertRow(); tr.insertCell().textContent = "Sin cambios todavía."; }
+  for (const c of d.cambios) {
+    const tr = tb.insertRow();
+    tr.insertCell().textContent = c.fecha.replace("T", " ").slice(0, 16);
+    tr.insertCell().textContent = `${c.de} → ${c.a}`;
+    tr.insertCell().textContent = c.motivo;
+  }
+}
+$("intGuardar").onclick = async () => {
+  try { await api("/api/inteligencia", { principal: $("intPrincipal").value, respaldo: $("intRespaldo").value, presupuesto_mensual_usd: parseFloat($("intTope").value || "0") }); }
+  catch (e) { alert(e.message.includes("PIN") || e.message.includes("403") ? "Para cambiar esto desde el celular, ponle un PIN a Luna." : "No se pudo: " + e.message); }
+  cargarInteligencia();
+};
+$("verInt").onclick = () => { $("intel").style.display = "block"; cargarInteligencia(); };
+$("cerrarInt").onclick = () => $("intel").style.display = "none";
 
 const pideManos = new URLSearchParams(location.search).get("manos") === "1" || leer("manos") === "1";
 api("/api/ping").then(async d => {

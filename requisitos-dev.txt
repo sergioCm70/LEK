@@ -1,0 +1,2 @@
+# Solo para correr las pruebas automáticas (probar.bat)
+pytest>=8

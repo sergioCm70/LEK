@@ -31,6 +31,14 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from lek.almacen import Almacen
+from lek.cerebros.base import ErrorProveedor
+from lek.cerebros.catalogo import catalogo, precios_claude
+from lek.cerebros.claude import Claude
+from lek.cerebros.gestor import Cerebro
+from lek.cerebros.ollama import Ollama
+from lek.config import Config
+
 BASE = pathlib.Path(__file__).resolve().parent
 load_dotenv(BASE / ".env")
 
@@ -50,7 +58,6 @@ CIUDAD = os.getenv("ASISTENTE_CIUDAD", "Palmira, Valle del Cauca").strip()
 DATOS = BASE / "datos"
 CONOCIMIENTO = BASE / "conocimiento"
 IDENTIDAD = DATOS / "identidad.json"
-MEMORIA = DATOS / "memoria.json"
 NOTAS = DATOS / "notas.txt"
 CERTS = DATOS / "certificados"
 PROGRAMAS = BASE / "programas.json"
@@ -61,13 +68,22 @@ MANUAL = BASE / "luna" / "MANUAL_LUNA.md"      # su identidad completa
 HOJA_RUTA = BASE / "luna" / "HOJA_DE_RUTA_LEK.md"
 BITACORA = DATOS / "bitacora_lek.md"
 VERSIONES = HABILIDADES / "versiones"         # respaldo antes de reemplazar una habilidad
-REGISTRO = DATOS / "conversaciones.jsonl"      # para aprender de errores y la revisión diaria
 ESTADO = DATOS / "estado.json"
-AJUSTES = DATOS / "ajustes.json"               # clave de Claude y modelo elegido (privado)
+AJUSTES_V0 = DATOS / "ajustes.json"            # solo para migrar la clave de la versión anterior
 SISTEMA = platform.system()  # "Windows", "Darwin" o "Linux"
 
 app = FastAPI()
-historiales: dict[str, list] = {}
+CONFIG = Config(DATOS)          # datos/config.json + datos/secretos.json
+ALMACEN = Almacen(DATOS)        # datos/luna.db: conversaciones para siempre, memoria, métricas, auditoría
+MODELOS = catalogo(MODELO)
+
+
+def clave_claude() -> str:
+    return CONFIG.secreto("claude_clave") or os.getenv("CLAUDE_API_KEY", "").strip()
+
+
+PROVEEDORES = {"ollama": Ollama(OLLAMA), "claude": Claude(clave_claude, precios_claude(MODELOS))}
+CEREBRO = Cerebro(CONFIG, ALMACEN, PROVEEDORES, MODELOS, MODELO)
 _candado = threading.Lock()
 
 
@@ -98,131 +114,13 @@ def ahora() -> str:
     return f"{dias[d.weekday()]} {d.day} de {meses[d.month - 1]} de {d.year}, {d:%I:%M %p}"
 
 
-# ---------------------------------------------------------------- cerebro (Ollama)
-# ---------------------------------------------------------------- cerebro en la nube: Claude
-MODELOS_CLAUDE = {  # USD por millón de tokens (entrada, salida), según platform.claude.com/docs (nov. 2026)
-    "claude-haiku-5-5": (0.10, 0.50),
-    "claude-sonnet-5-5": (2.0, 10.0),
-    "claude-opus-5-5": (4.0, 20.0),
-}
+# ---------------------------------------------------------------- cerebro (lek/cerebros)
+def ollama_chat(mensajes: list, usar_tools: bool = True, privado: bool = False) -> dict:
+    """Piensa con el cerebro que toque (principal o respaldo) y devuelve un mensaje en formato común."""
+    return CEREBRO.chat(mensajes, herramientas_actuales() if usar_tools else None, privado=privado).como_mensaje()
 
 
-def ajustes() -> dict:
-    a = leer_json(AJUSTES, {})
-    a.setdefault("claude_clave", os.getenv("CLAUDE_API_KEY", "").strip())
-    a.setdefault("claude_modelo", "claude-haiku-5-5")
-    return a
-
-
-def a_formato_claude(mensajes: list) -> tuple[str, list]:
-    """Convierte el historial (formato Ollama) al formato de mensajes de Claude."""
-    sistema, salida = "", []
-    for m in mensajes:
-        rol = m.get("role")
-        if rol == "system":
-            sistema += m.get("content", "")
-            continue
-        if rol == "tool":
-            bloque = {"type": "tool_result", "tool_use_id": m.get("tool_call_id", "sin_id"),
-                      "content": str(m.get("content", "")) or "(vacío)"}
-            if salida and salida[-1]["role"] == "user" and isinstance(salida[-1]["content"], list):
-                salida[-1]["content"].append(bloque)
-            else:
-                salida.append({"role": "user", "content": [bloque]})
-            continue
-        if rol == "assistant" and m.get("tool_calls"):
-            bloques = [{"type": "text", "text": m["content"]}] if m.get("content") else []
-            for ll in m["tool_calls"]:
-                f = ll.get("function", {})
-                args = f.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args or "{}")
-                    except Exception:
-                        args = {}
-                bloques.append({"type": "tool_use", "id": ll.get("id", "sin_id"), "name": f.get("name", ""), "input": args or {}})
-            salida.append({"role": "assistant", "content": bloques})
-            continue
-        texto = str(m.get("content", "")).strip() or "…"
-        if salida and salida[-1]["role"] == rol and isinstance(salida[-1]["content"], str):
-            salida[-1]["content"] += "\n" + texto  # Claude pide turnos alternados
-        else:
-            salida.append({"role": rol, "content": texto})
-    while salida and salida[0]["role"] != "user":
-        salida.pop(0)
-    return sistema, salida
-
-
-def claude_chat(mensajes: list, usar_tools: bool = True, clave: str = "", modelo: str = "") -> dict:
-    a = ajustes()
-    clave, modelo = clave or a["claude_clave"], modelo or a["claude_modelo"]
-    sistema, msgs = a_formato_claude(mensajes)
-    cuerpo = {"model": modelo, "max_tokens": 1024, "system": sistema, "messages": msgs}
-    if usar_tools:
-        cuerpo["tools"] = [{"name": t["function"]["name"], "description": t["function"]["description"],
-                            "input_schema": t["function"]["parameters"]} for t in herramientas_actuales()]
-    r = requests.post("https://api.anthropic.com/v1/messages", json=cuerpo, timeout=120, headers={
-        "x-api-key": clave, "anthropic-version": "2023-06-01", "content-type": "application/json"})
-    if r.status_code != 200:
-        try:
-            detalle = r.json().get("error", {}).get("message", r.text[:200])
-        except Exception:
-            detalle = r.text[:200]
-        raise RuntimeError(f"Claude respondió {r.status_code}: {detalle}")
-    datos = r.json()
-    uso = datos.get("usage", {})
-    sumar_gasto(modelo, uso.get("input_tokens", 0) + uso.get("cache_read_input_tokens", 0)
-                + uso.get("cache_creation_input_tokens", 0), uso.get("output_tokens", 0))
-    texto = "".join(b.get("text", "") for b in datos.get("content", []) if b.get("type") == "text")
-    llamadas = [{"id": b["id"], "function": {"name": b["name"], "arguments": b.get("input", {})}}
-                for b in datos.get("content", []) if b.get("type") == "tool_use"]
-    return {"role": "assistant", "content": texto, "tool_calls": llamadas}
-
-
-def sumar_gasto(modelo: str, entrada: int, salida: int) -> None:
-    precio_e, precio_s = MODELOS_CLAUDE.get(modelo, (0, 0))
-    est = leer_json(ESTADO, {})
-    g = est.setdefault("claude", {"tokens_entrada": 0, "tokens_salida": 0, "usd": 0.0, "consultas": 0})
-    g["tokens_entrada"] += entrada
-    g["tokens_salida"] += salida
-    g["consultas"] += 1
-    g["usd"] = round(g["usd"] + entrada / 1e6 * precio_e + salida / 1e6 * precio_s, 5)
-    escribir_json(ESTADO, est)
-
-
-_ultimo_cerebro = {"nombre": "local", "aviso": ""}
-
-
-def ollama_chat(mensajes: list, usar_tools: bool = True) -> dict:
-    """El cerebro: Claude si hay clave; si falla (sin internet, sin saldo...), el modelo local."""
-    if ajustes()["claude_clave"]:
-        try:
-            msg = claude_chat(mensajes, usar_tools)
-            _ultimo_cerebro.update(nombre=ajustes()["claude_modelo"], aviso="")
-            return msg
-        except Exception as e:
-            _ultimo_cerebro["aviso"] = str(e)[:300]
-            print(f"  Claude no respondió ({e}); uso el cerebro local.")
-    _ultimo_cerebro["nombre"] = MODELO
-    return modelo_local(mensajes, usar_tools)
-
-
-def modelo_local(mensajes: list, usar_tools: bool = True) -> dict:
-    cuerpo = {
-        "model": MODELO,
-        "messages": mensajes,
-        "stream": False,
-        "think": False,  # respuestas rápidas (sin "pensar en voz alta")
-        "options": {"temperature": 0.6, "num_ctx": 8192},
-    }
-    if usar_tools:
-        cuerpo["tools"] = herramientas_actuales()
-    r = requests.post(f"{OLLAMA}/api/chat", json=cuerpo, timeout=300)
-    if r.status_code == 400 and "think" in r.text:  # Ollama viejo o modelo sin esa opción
-        cuerpo.pop("think")
-        r = requests.post(f"{OLLAMA}/api/chat", json=cuerpo, timeout=300)
-    r.raise_for_status()
-    return r.json().get("message", {})
+pensar = ollama_chat
 
 
 def limpiar_respuesta(texto: str) -> str:
@@ -274,28 +172,23 @@ def cambiar_mi_nombre(nombre: str, por_que: str = "") -> str:
 
 # ---------------------------------------------------------------- memoria
 def cargar_memoria() -> list:
-    return leer_json(MEMORIA, {"datos": []}).get("datos", [])
+    return ALMACEN.recuerdos()
 
 
 def recordar(dato: str) -> str:
     dato = (dato or "").strip()
     if not dato:
         return "No había nada que recordar."
-    datos = cargar_memoria()
-    if any(plano(d["dato"]) == plano(dato) for d in datos):
-        return "Eso ya lo tenía guardado."
-    datos.append({"dato": dato[:300], "fecha": datetime.date.today().isoformat()})
-    escribir_json(MEMORIA, {"datos": datos[-200:]})
-    return "Guardado en mi memoria."
+    return "Guardado en mi memoria." if ALMACEN.recordar(dato[:500]) else "Eso ya lo tenía guardado."
 
 
 def olvidar(texto: str) -> str:
-    clave = plano(texto).strip()
-    datos = cargar_memoria()
-    quedan = [d for d in datos if clave not in plano(d["dato"])] if clave else datos
-    escribir_json(MEMORIA, {"datos": quedan})
-    borrados = len(datos) - len(quedan)
-    return f"Olvidé {borrados} recuerdo(s)." if borrados else "No encontré nada parecido en mi memoria."
+    """Nunca destruye: archiva. Se puede recuperar desde la base de datos."""
+    n = ALMACEN.archivar_recuerdos(texto)
+    ALMACEN.auditar("olvidar", texto)
+    if not n:
+        return "No encontré nada parecido en mi memoria."
+    return f"Dejé de usar {n} recuerdo(s). No los borré: quedan archivados por si los quieres de vuelta."
 
 
 # ---------------------------------------------------------------- notas
@@ -572,12 +465,12 @@ def anotar_avance_lek(avance: str, verificacion: str) -> str:
     return "Avance anotado en la bitácora de LEK."
 
 
-def diagnostico() -> str:
-    """Autodiagnóstico: estado real del sistema, sin suposiciones."""
-    partes = [f"Sistema: {SISTEMA} {platform.release()}, {os.cpu_count()} núcleos"]
+def recursos() -> dict:
+    """Medición real del PC: RAM, GPU (si hay NVIDIA) y lo que Ollama tiene cargado."""
+    datos = {"sistema": f"{SISTEMA} {platform.release()}", "nucleos": os.cpu_count()}
     try:
         disco = shutil.disk_usage(str(BASE))
-        partes.append(f"disco libre: {disco.free / 1e9:.0f} GB")
+        datos["disco_libre_gb"] = round(disco.free / 1e9)
     except Exception:
         pass
     if SISTEMA == "Windows":
@@ -590,30 +483,78 @@ def diagnostico() -> str:
                             ("c", ctypes.c_ulonglong), ("d", ctypes.c_ulonglong), ("e", ctypes.c_ulonglong)]
             m = M(); m.l = ctypes.sizeof(M)
             ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-            partes.append(f"RAM: {m.libre / 1e9:.1f} de {m.total / 1e9:.1f} GB libres")
+            datos["ram_total_gb"] = round(m.total / 1e9, 1)
+            datos["ram_libre_gb"] = round(m.libre / 1e9, 1)
+            datos["ram_uso_pct"] = m.carga
         except Exception:
             pass
-    est = leer_json(ESTADO, {})
-    if est.get("tiempos"):
-        t = est["tiempos"][-20:]
-        partes.append(f"tiempo medio de respuesta: {sum(t) / len(t):.1f} s (últimas {len(t)})")
-    if est.get("errores_herramientas"):
-        partes.append(f"herramientas que fallaron: {est['errores_herramientas']}")
-    a = ajustes()
-    partes.append(f"cerebro principal: {a['claude_modelo'] if a['claude_clave'] else MODELO}"
-                  + (f", respaldo local: {MODELO}" if a["claude_clave"] else ""))
-    if est.get("claude"):
-        partes.append(f"gasto en Claude: {est['claude']['usd']:.3f} dólares en {est['claude']['consultas']} consultas")
+    try:
+        salida = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                                 "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=8,
+                                creationflags=0x08000000 if SISTEMA == "Windows" else 0)
+        if salida.returncode == 0 and salida.stdout.strip():
+            nombre, total, usada, uso = [x.strip() for x in salida.stdout.strip().splitlines()[0].split(",")]
+            datos["gpu"] = {"nombre": nombre, "vram_total_gb": round(float(total) / 1024, 1),
+                            "vram_usada_gb": round(float(usada) / 1024, 1), "uso_pct": int(float(uso))}
+    except Exception:
+        pass
+    datos.setdefault("gpu", None)
+    datos["ollama_cargados"] = [{"modelo": m.get("name"), "tam_gb": round(m.get("size", 0) / 1e9, 1),
+                                 "en_gpu_gb": round(m.get("size_vram", 0) / 1e9, 1)}
+                                for m in PROVEEDORES["ollama"].modelos_cargados()]
+    return datos
+
+
+def diagnostico() -> str:
+    """Autodiagnóstico: estado real del sistema, sin suposiciones."""
+    r = recursos()
+    partes = [f"Sistema: {r['sistema']}, {r['nucleos']} núcleos"]
+    if "ram_total_gb" in r:
+        partes.append(f"RAM: {r['ram_libre_gb']} de {r['ram_total_gb']} GB libres ({r['ram_uso_pct']} % en uso)")
+    if r.get("disco_libre_gb") is not None:
+        partes.append(f"disco libre: {r['disco_libre_gb']} GB")
+    g = r.get("gpu")
+    partes.append(f"GPU: {g['nombre']} con {g['vram_total_gb']} GB de VRAM ({g['vram_usada_gb']} GB en uso)" if g
+                  else "GPU NVIDIA: no detectada")
+    for c in r["ollama_cargados"]:
+        partes.append(f"Ollama tiene cargado {c['modelo']}: {c['tam_gb']} GB, {c['en_gpu_gb']} GB en la GPU")
+    e = CEREBRO.estado()
+    partes.append(f"cerebro principal: {e['principal']}; respaldo: {e['respaldo']}; último usado: "
+                  f"{e['activo']['modelo'] or 'ninguno todavía'}")
+    for m in e["modelos"]:
+        if m["llamadas_30d"]:
+            partes.append(f"{m['id']}: {m['llamadas_30d']} llamadas en 30 días, {m['exito_30d']} % exitosas, "
+                          f"{m['latencia_media_s']} s de media, estado {m['estado']}")
+    partes.append(f"gasto en la nube este mes: {e['gasto_mes_usd']} de {e['presupuesto_mensual_usd']} dólares")
     partes.append(mis_habilidades())
     n_prop = IDEAS.read_text(encoding="utf-8").count("\n## ") if IDEAS.exists() else 0
     partes.append(f"propuestas de mejora registradas: {n_prop}")
-    partes.append(f"recuerdos guardados: {len(cargar_memoria())}")
+    partes.append(f"recuerdos: {len(cargar_memoria())}; mensajes de conversación guardados: {ALMACEN.total_mensajes()}")
     return ". ".join(partes) + "."
 
 
 def ver_memoria() -> str:
     datos = cargar_memoria()
     return "\n".join(f"- {d['dato']} ({d['fecha']})" for d in datos) or "No tengo recuerdos guardados."
+
+
+_privado_dinamico = threading.local()
+
+
+def buscar_conversaciones(consulta: str = "", fecha: str = "") -> str:
+    """Todo lo hablado queda guardado para siempre: busca por tema o por día (AAAA-MM-DD)."""
+    if fecha.strip():
+        filas = ALMACEN.mensajes_del_dia(fecha.strip()[:10])
+        if not filas:
+            return f"No hablamos el {fecha.strip()[:10]}."
+    else:
+        filas = ALMACEN.buscar_mensajes(consulta, limite=12)
+        if not filas:
+            return "No encontré conversaciones sobre eso."
+        filas = sorted(filas, key=lambda f: f["id"])
+    _privado_dinamico.valor = any(f["privado"] for f in filas)
+    return "\n".join(f"[{f['fecha'][:16].replace('T', ' ')}] {'Usuario' if f['rol'] == 'usuario' else 'Tú'}: "
+                     f"{f['contenido'][:300]}" for f in filas[:60])
 
 
 def mis_habilidades() -> str:
@@ -638,7 +579,11 @@ HERRAMIENTAS = [
        {"consulta": _txt}, ["consulta"]),
     _f("recordar", "Guarda en tu memoria permanente un dato importante del usuario cuando él te lo pida o sea claramente útil a futuro.",
        {"dato": _txt}, ["dato"]),
-    _f("olvidar", "Borra de tu memoria los recuerdos que contengan ese texto.", {"texto": _txt}, ["texto"]),
+    _f("olvidar", "SOLO si el usuario lo pide explícitamente: deja de usar los recuerdos que contengan ese texto "
+                  "(no se borran, se archivan).", {"texto": _txt}, ["texto"]),
+    _f("buscar_conversaciones", "Busca en TODAS las conversaciones pasadas con el usuario (se guardan para siempre). "
+       "Por tema con 'consulta', o un día completo con 'fecha' en formato AAAA-MM-DD.",
+       {"consulta": _txt, "fecha": _txt}),
     _f("guardar_nota", "Guarda una nota o pendiente del usuario.", {"texto": _txt}, ["texto"]),
     _f("leer_notas", "Lee las últimas notas guardadas.", {"cuantas": {"type": "integer"}}),
     _f("abrir_programa", "Abre un programa en el PC del usuario (Revit, AutoCAD, Word, etc.).", {"nombre": _txt}, ["nombre"]),
@@ -674,8 +619,21 @@ FUNCIONES = {
     "abrir_programa": abrir_programa, "abrir_web": abrir_web, "cambiar_mi_nombre": cambiar_mi_nombre,
     "crear_habilidad": crear_habilidad, "proponer_mejora": proponer_mejora, "mis_habilidades": mis_habilidades,
     "leer_mi_manual": leer_mi_manual, "leer_hoja_de_ruta": leer_hoja_de_ruta, "anotar_avance_lek": anotar_avance_lek,
-    "diagnostico": diagnostico, "ver_memoria": ver_memoria,
+    "diagnostico": diagnostico, "ver_memoria": ver_memoria, "buscar_conversaciones": buscar_conversaciones,
 }
+
+
+# Herramientas que devuelven información de una clase con regla de privacidad propia
+HERRAMIENTAS_PRIVADAS = {"ver_memoria": "memoria", "leer_notas": "notas", "buscar_documentos": "documentos"}
+
+
+def herramienta_es_privada(nombre: str) -> bool:
+    clase = HERRAMIENTAS_PRIVADAS.get(nombre)
+    if clase and CONFIG.get("privacidad", clase) == "local":
+        return True
+    if nombre == "buscar_conversaciones" and getattr(_privado_dinamico, "valor", False):
+        return True
+    return False
 
 
 def herramientas_actuales() -> list:
@@ -714,9 +672,17 @@ def registrar_error(nombre: str) -> None:
 
 
 # ---------------------------------------------------------------- conversación
-def construir_prompt() -> str:
-    """Versión condensada de luna/MANUAL_LUNA.md (el manual completo se consulta con leer_mi_manual)."""
-    recuerdos = "\n".join(f"- {d['dato']}" for d in cargar_memoria()[-40:]) or "- (todavía nada)"
+def construir_prompt(incluir_memoria: bool = True, contexto: str = "") -> str:
+    """Versión condensada de luna/MANUAL_LUNA.md (el manual completo se consulta con leer_mi_manual).
+    incluir_memoria=False cuando piensa un modelo en la nube y la memoria es solo local."""
+    todos = cargar_memoria()
+    if incluir_memoria:
+        recuerdos = "\n".join(f"- {d['dato']}" for d in todos[-60:]) or "- (todavía nada)"
+        if len(todos) > 60:
+            recuerdos += f"\n- (y {len(todos) - 60} recuerdos más: usa ver_memoria)"
+    else:
+        recuerdos = (f"- Tienes {len(todos)} recuerdos guardados en este PC. Por privacidad no se envían a la nube; "
+                     "si los necesitas, usa ver_memoria y se procesarán en el PC.")
     usuario = LLAMARME or "tu usuario"
     return f"""Eres {mi_nombre().upper()}, la inteligencia personal de {usuario}, estudiante de arquitectura en Colombia.
 Tu inspiración funcional es JARVIS, pero tu identidad, arquitectura y evolución son propias. No eres un chatbot
@@ -752,64 +718,118 @@ a las propuestas, notas o documentos.
 
 Hoy es {ahora()}. {usuario} vive en {CIUDAD}: si pregunta por el clima o algo local sin decir dónde, usa esa ciudad.
 
+Memoria de conversaciones: TODO lo que hablas con {usuario} queda guardado para siempre en su PC. Si te pregunta
+por algo dicho antes que no ves aquí, búscalo con buscar_conversaciones antes de decir que no lo sabes.
+{contexto}
 Lo que recuerdas de {usuario}:
 {recuerdos}"""
 
 
+def contexto_pasado(texto: str, para_nube: bool, desde_id: int) -> str:
+    """Resúmenes de días anteriores y fragmentos de conversaciones viejas relacionados con lo que se pregunta."""
+    partes = []
+    resumenes = ALMACEN.resumenes(7)
+    if resumenes:
+        partes.append("Resúmenes de días anteriores:\n" + "\n".join(f"- {r['dia']}: {r['resumen']}" for r in resumenes))
+    relacionados = [f for f in ALMACEN.buscar_mensajes(texto, limite=6, antes_de_id=desde_id)
+                    if not (para_nube and f["privado"])]
+    if relacionados:
+        partes.append("Fragmentos de conversaciones pasadas relacionados:\n" + "\n".join(
+            f"- [{f['fecha'][:10]}] {'Usuario' if f['rol'] == 'usuario' else 'Tú'}: {f['contenido'][:220]}"
+            for f in sorted(relacionados, key=lambda f: f["id"])))
+    return ("\n" + "\n\n".join(partes) + "\n") if partes else ""
+
+
 def responder(texto: str, cliente: str = "web") -> str:
-    with _candado:
-        historial = historiales.setdefault(cliente, [])
-        historial.append({"role": "user", "content": texto})
-        del historial[:-20]
-        mensajes = [{"role": "system", "content": construir_prompt()}] + list(historial)
+    """Un turno de conversación. Todo se guarda para siempre; lo privado nunca va a la nube."""
+    ALMACEN.guardar_mensaje("usuario", texto, cliente)
+    inicio = int(ALMACEN.meta("inicio_contexto", "0") or 0)
+    recientes = [m for m in ALMACEN.ultimos_mensajes(21) if m["id"] > inicio]
+    primero = CEREBRO.cadena()[0][0]
+    para_nube = CEREBRO.ubicacion(primero) == "nube"
+    con_memoria = not para_nube or CONFIG.get("privacidad", "memoria") == "nube"
+    desde = recientes[0]["id"] if recientes else 0
+    contexto = contexto_pasado(texto, para_nube, desde)
+
+    def sistema(memoria: bool) -> dict:
+        return {"role": "system", "content": construir_prompt(memoria, contexto)}
+
+    mensajes = [sistema(con_memoria)] + [
+        {"role": "user" if m["rol"] == "usuario" else "assistant", "content": m["contenido"], "privado": bool(m["privado"])}
+        for m in recientes]
+    privado = False
     respuesta = ""
-    inicio = datetime.datetime.now()
-    for _ in range(5):  # hasta 5 rondas de herramientas
-        msg = ollama_chat(mensajes)
-        llamadas = msg.get("tool_calls") or []
-        if not llamadas:
-            respuesta = limpiar_respuesta(msg.get("content", ""))
-            break
-        mensajes.append({"role": "assistant", "content": msg.get("content", ""), "tool_calls": llamadas})
-        for ll in llamadas:
-            f = ll.get("function", {})
-            resultado = ejecutar_herramienta(f.get("name", ""), f.get("arguments", {}))
-            mensajes.append({"role": "tool", "content": resultado, "tool_name": f.get("name", ""),
-                             "tool_call_id": ll.get("id", "")})
+    try:
+        for _ in range(5):  # hasta 5 rondas de herramientas
+            msg = ollama_chat(mensajes, privado=privado)
+            llamadas = msg.get("tool_calls") or []
+            if not llamadas:
+                respuesta = limpiar_respuesta(msg.get("content", ""))
+                break
+            mensajes.append({"role": "assistant", "content": msg.get("content", ""), "tool_calls": llamadas,
+                             "privado": privado})
+            for ll in llamadas:
+                f = ll.get("function", {})
+                nombre = f.get("name", "")
+                _privado_dinamico.valor = False
+                resultado = ejecutar_herramienta(nombre, f.get("arguments", {}))
+                es_privado = herramienta_es_privada(nombre)
+                if es_privado and not privado:
+                    privado = True                       # desde aquí el turno sigue solo en el PC
+                    mensajes[0] = sistema(True)
+                mensajes.append({"role": "tool", "content": resultado, "tool_name": nombre,
+                                 "tool_call_id": ll.get("id", ""), "privado": es_privado})
+    except ErrorProveedor as e:
+        respuesta = "Ahora mismo no logro pensar: ni el cerebro principal ni el de respaldo respondieron. " \
+                    "Revisa que Ollama esté abierto."
+        print("  Ningún cerebro respondió:", e)
     if not respuesta:
         respuesta = "Listo."
-    with _candado:
-        historial.append({"role": "assistant", "content": respuesta})
-    registrar_turno(cliente, texto, respuesta, (datetime.datetime.now() - inicio).total_seconds())
+    ALMACEN.guardar_mensaje("luna", respuesta, cliente, modelo=CEREBRO.ultimo["modelo"], privado=privado)
     return respuesta
 
 
-def registrar_turno(cliente: str, texto: str, respuesta: str, segundos: float) -> None:
-    try:
-        DATOS.mkdir(exist_ok=True)
-        with REGISTRO.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"fecha": datetime.datetime.now().isoformat(timespec="seconds"), "cliente": cliente,
-                                "usuario": texto, "luna": respuesta, "segundos": round(segundos, 1)},
-                               ensure_ascii=False) + "\n")
-        est = leer_json(ESTADO, {})
-        est["tiempos"] = (est.get("tiempos", []) + [round(segundos, 1)])[-100:]
-        est["ultima_conversacion"] = datetime.datetime.now().isoformat(timespec="seconds")
-        escribir_json(ESTADO, est)
-    except Exception as e:
-        print("  No pude guardar el registro:", e)
+def registrar_turno(*_args, **_kwargs) -> None:
+    """Obsoleto desde la fase 0: los turnos se guardan en datos/luna.db."""
+
+
+def resumir_dias_pendientes(maximo: int = 10) -> None:
+    """Un resumen por cada día pasado que no lo tenga, para recordar a largo plazo sin cargar todo."""
+    hoy = datetime.date.today().isoformat()
+    for dia in ALMACEN.dias_sin_resumen(hoy)[:maximo]:
+        filas = ALMACEN.mensajes_del_dia(dia)
+        if not filas:
+            continue
+        texto = "\n".join(f"{'Usuario' if f['rol'] == 'usuario' else 'Luna'}: "
+                          f"{'(información privada)' if f['privado'] else f['contenido'][:400]}" for f in filas)[-12000:]
+        pedido = ("Resume en 4 a 8 frases lo importante de esta conversación del " + dia + ": qué pidió o contó el "
+                  "usuario, qué se decidió, datos nuevos sobre él y pendientes. Solo hechos de la conversación.\n\n" + texto)
+        try:
+            msg = ollama_chat([{"role": "user", "content": pedido}], usar_tools=False)
+            resumen = limpiar_respuesta(msg.get("content", ""))
+            if resumen:
+                ALMACEN.guardar_resumen(dia, resumen[:1500], filas[-1]["id"], CEREBRO.ultimo["modelo"])
+        except Exception as e:
+            print(f"  No pude resumir el {dia}: {e}")
+            return
 
 
 def revision_diaria() -> None:
     """Iniciativa propia: una vez al día revisa su estado y las últimas conversaciones y, si encuentra
     una mejora valiosa, la registra como propuesta. Nunca ejecuta cambios (nivel 1)."""
+    try:
+        ALMACEN.respaldar()
+    except Exception as e:
+        print("  No pude hacer el respaldo diario:", e)
+    resumir_dias_pendientes()
     est = leer_json(ESTADO, {})
     if est.get("ultima_revision") == datetime.date.today().isoformat():
         return
     try:
-        recientes = REGISTRO.read_text(encoding="utf-8").strip().splitlines()[-15:] if REGISTRO.exists() else []
+        recientes = ALMACEN.ultimos_mensajes(30)
         conversaciones = "\n".join(
-            f"- Usuario: {json.loads(l)['usuario'][:200]} | Tú: {json.loads(l)['luna'][:200]} ({json.loads(l)['segundos']} s)"
-            for l in recientes) or "(sin conversaciones todavía)"
+            f"- {'Usuario' if m['rol'] == 'usuario' else 'Tú'}: {m['contenido'][:200]}"
+            for m in recientes if not m["privado"]) or "(sin conversaciones todavía)"
         pedido = (f"REVISIÓN DIARIA (iniciativa propia, nivel 1). Tu estado: {diagnostico()}\n\n"
                   f"Últimas conversaciones:\n{conversaciones}\n\n"
                   "Busca UNA oportunidad de mejora de impacto alto o medio: algo que fallaste, algo lento, una necesidad "
@@ -827,7 +847,7 @@ def revision_diaria() -> None:
                 f = ll.get("function", {})
                 nombre = f.get("name", "")
                 permitido = nombre in ("proponer_mejora", "diagnostico", "leer_hoja_de_ruta", "leer_mi_manual",
-                                       "mis_habilidades", "buscar_internet", "buscar_documentos")
+                                       "mis_habilidades", "buscar_internet")  # nada privado aquí
                 resultado = ejecutar_herramienta(nombre, f.get("arguments", {})) if permitido else \
                     "En la revisión diaria solo puedes investigar y proponer."
                 mensajes.append({"role": "tool", "content": resultado, "tool_name": nombre,
@@ -916,17 +936,17 @@ def chat(m: Mensaje, request: Request):
     texto = m.texto.strip()[:2000]
     if not texto:
         raise HTTPException(400, "Mensaje vacío")
-    try:
-        respuesta = responder(texto, m.cliente[:40] or "web")
-    except requests.RequestException:
-        respuesta = "No logro hablar con Ollama. Revisa que esté abierto en el PC."
-    return {"respuesta": respuesta, "asistente": mi_nombre()}
+    respuesta = responder(texto, m.cliente[:40] or "web")
+    return {"respuesta": respuesta, "asistente": mi_nombre(), "cerebro": CEREBRO.ultimo["modelo"],
+            "degradado": CEREBRO.ultimo["degradado"], "aviso": CEREBRO.ultimo["aviso"]}
 
 
 @app.post("/api/reiniciar")
 def reiniciar(m: Mensaje, request: Request):
+    """Empieza un tema nuevo: el contexto corto se limpia, pero nada se borra (lo busca si hace falta)."""
     revisar_pin(request)
-    historiales.pop(m.cliente, None)
+    ultimos = ALMACEN.ultimos_mensajes(1)
+    ALMACEN._fijar("inicio_contexto", str(ultimos[0]["id"] if ultimos else 0))
     return {"ok": True}
 
 
@@ -991,34 +1011,81 @@ class Ajustes(BaseModel):
 @app.get("/api/ajustes")
 def ver_ajustes(request: Request):
     revisar_pin(request)
-    a = ajustes()
-    gasto = leer_json(ESTADO, {}).get("claude", {})
-    return {"cerebro": a["claude_modelo"] if a["claude_clave"] else MODELO, "usa_claude": bool(a["claude_clave"]),
-            "clave": ("…" + a["claude_clave"][-4:]) if a["claude_clave"] else "", "modelo": a["claude_modelo"],
-            "modelos": list(MODELOS_CLAUDE), "local": MODELO, "gasto": gasto,
-            "ultimo": _ultimo_cerebro["nombre"], "aviso": _ultimo_cerebro["aviso"]}
+    e = CEREBRO.estado()
+    clave = clave_claude()
+    gasto = {"usd": e["gasto_mes_usd"], "consultas": sum(m["llamadas_30d"] for m in e["modelos"]
+                                                        if m["proveedor"] == "claude")}
+    return {"cerebro": e["activo"]["modelo"] or (e["principal"] if clave else MODELO), "usa_claude": bool(clave),
+            "clave": ("…" + clave[-4:]) if clave else "", "modelo": e["principal"],
+            "modelos": [m for m in MODELOS if MODELOS[m]["proveedor"] == "claude"], "local": MODELO,
+            "gasto": gasto, "ultimo": e["activo"]["modelo"], "aviso": e["activo"]["aviso"]}
 
 
 @app.post("/api/ajustes")
 def guardar_ajustes(nuevo: Ajustes, request: Request):
     revisar_aprobacion(request)  # tocar la clave es delicado: con PIN o desde este PC
-    a = leer_json(AJUSTES, {})
     if nuevo.borrar_clave:
-        a.pop("claude_clave", None)
+        CONFIG.guardar_secreto("claude_clave", "")
+        ALMACEN.auditar("clave_claude", "quitada")
     if nuevo.modelo:
-        if nuevo.modelo not in MODELOS_CLAUDE:
+        if nuevo.modelo not in MODELOS:
             raise HTTPException(400, "Modelo desconocido")
-        a["claude_modelo"] = nuevo.modelo
+        CONFIG.cambiar("cerebro", "principal", nuevo.modelo)
+        ALMACEN.auditar("cambio_principal", nuevo.modelo)
     if nuevo.clave.strip():
         clave = nuevo.clave.strip()
         try:  # probarla antes de guardarla
-            claude_chat([{"role": "user", "content": "Responde solo: ok"}], usar_tools=False,
-                        clave=clave, modelo=a.get("claude_modelo", "claude-haiku-5-5"))
-        except Exception as e:
-            raise HTTPException(400, f"La clave no funcionó: {e}")
-        a["claude_clave"] = clave
-    escribir_json(AJUSTES, a)
+            PROVEEDORES["claude"].chat(CONFIG.get("cerebro", "principal") if MODELOS.get(
+                CONFIG.get("cerebro", "principal"), {}).get("proveedor") == "claude" else "claude-haiku-5-5",
+                [{"role": "user", "content": "Responde solo: ok"}], None, clave=clave)
+        except ErrorProveedor as e:
+            raise HTTPException(400, f"La clave no funcionó: {e.detalle}")
+        CONFIG.guardar_secreto("claude_clave", clave)
+        CEREBRO.salud.reactivar(CONFIG.get("cerebro", "principal"))
+        ALMACEN.auditar("clave_claude", "guardada …" + clave[-4:])
     return ver_ajustes(request)
+
+
+class CambioInteligencia(BaseModel):
+    principal: str = ""
+    respaldo: str = ""
+    modo: str = ""
+    presupuesto_mensual_usd: float | None = None
+    privacidad: dict = {}
+    reactivar: str = ""
+
+
+@app.get("/api/inteligencia")
+def ver_inteligencia(request: Request):
+    """Todo lo que el panel de inteligencia muestra: modelos, estado, motivos, cambios, privacidad y recursos."""
+    revisar_pin(request)
+    return {**CEREBRO.estado(), "recursos": recursos()}
+
+
+@app.post("/api/inteligencia")
+def cambiar_inteligencia(c: CambioInteligencia, request: Request):
+    revisar_aprobacion(request)
+    try:
+        if c.principal:
+            if c.principal not in MODELOS:
+                raise ValueError("Modelo desconocido")
+            CONFIG.cambiar("cerebro", "principal", c.principal)
+        if c.respaldo:
+            if MODELOS.get(c.respaldo, {}).get("ubicacion") != "local":
+                raise ValueError("El respaldo debe ser un modelo local, para que Luna funcione sin internet")
+            CONFIG.cambiar("cerebro", "respaldo", c.respaldo)
+        if c.modo:
+            CONFIG.cambiar("cerebro", "modo", c.modo)
+        if c.presupuesto_mensual_usd is not None:
+            CONFIG.cambiar("cerebro", "presupuesto_mensual_usd", max(0.0, c.presupuesto_mensual_usd))
+        for clase, valor in (c.privacidad or {}).items():
+            CONFIG.cambiar("privacidad", clase, valor)
+        if c.reactivar:
+            CEREBRO.salud.reactivar(c.reactivar)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    ALMACEN.auditar("cambio_inteligencia", c.model_dump() if hasattr(c, "model_dump") else c.dict())
+    return ver_inteligencia(request)
 
 
 @app.post("/api/apagar")
@@ -1216,11 +1283,36 @@ def liberar_puerto() -> bool:
     return False
 
 
+def migrar_ajustes_v0() -> None:
+    """La versión anterior guardaba la clave de Claude en datos/ajustes.json: pasa a secretos.json."""
+    viejo = leer_json(AJUSTES_V0, {})
+    if viejo.get("claude_clave") and not CONFIG.secreto("claude_clave"):
+        CONFIG.guardar_secreto("claude_clave", viejo["claude_clave"])
+    if viejo.get("claude_modelo") in MODELOS:
+        CONFIG.cambiar("cerebro", "principal", viejo["claude_modelo"])
+    if viejo:
+        AJUSTES_V0.rename(AJUSTES_V0.with_suffix(".json.migrado"))
+
+
+def preparar_datos() -> None:
+    informe = ALMACEN.migrar_desde_json()
+    if informe.get("estado") == "migrado":
+        print(f"  Datos migrados a luna.db: {informe['mensajes']} mensajes, {informe['recuerdos']} recuerdos.")
+    elif informe.get("estado") == "error":
+        print("  La migración no se hizo (los datos viejos siguen intactos):", informe.get("detalle"))
+    migrar_ajustes_v0()
+    try:
+        ALMACEN.respaldar()
+    except Exception as e:
+        print("  No pude hacer el respaldo:", e)
+
+
 def main():
     import uvicorn
     DATOS.mkdir(exist_ok=True)
     CONOCIMIENTO.mkdir(exist_ok=True)
     PROPUESTAS.mkdir(parents=True, exist_ok=True)
+    preparar_datos()
     if not revisar_ollama() or not liberar_puerto():
         input("  Presiona Enter para salir...")
         return
@@ -1229,8 +1321,8 @@ def main():
     crt, key = certificado(ip)
     ident = cargar_identidad()
     print("\n  " + "=" * 52)
-    a = ajustes()
-    cerebro = f"{a['claude_modelo']} (Claude), respaldo local {MODELO}" if a["claude_clave"] else f"{MODELO}, gratis y local"
+    principal = CONFIG.get("cerebro", "principal")
+    cerebro = f"{principal} (Claude), respaldo local {MODELO}" if clave_claude() else f"{MODELO}, gratis y local"
     print(f"  {mi_nombre().upper()} en línea  (cerebro: {cerebro})")
     if ident.get("por_que") and not NOMBRE_FIJO:
         print(f'  "{ident["por_que"]}"')
@@ -1238,9 +1330,10 @@ def main():
     print(f"  En el celular: https://{ip}:{PUERTO}   (misma Wi-Fi)")
     print(f"  PIN: {'activado' if PIN else 'sin PIN (ponlo en .env)'}")
     print(f"  Habilidades activas: {len(cargar_habilidades())}")
+    print(f"  Memoria: {ALMACEN.total_mensajes()} mensajes guardados para siempre, {len(cargar_memoria())} recuerdos")
     print("  Para apagar: cierra esta ventana o Ctrl+C")
     print("  " + "=" * 52 + "\n")
-    if not ajustes()["claude_clave"]:  # con Claude no hace falta ocupar RAM con el modelo local
+    if not clave_claude():  # con Claude no hace falta ocupar RAM con el modelo local
         threading.Thread(target=calentar_cerebro, daemon=True).start()
     if ABRIR_VENTANA:
         threading.Timer(2, abrir_ventana_luna).start()

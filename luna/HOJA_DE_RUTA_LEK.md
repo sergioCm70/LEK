@@ -13,7 +13,7 @@ Prioridad: **A** = alto impacto y pronto · **B** = intermedio · **C** = invest
 
 ---
 
-## Etapa 0 — Núcleo de LUNA ✅ (hecho)
+## Etapa 0 — Núcleo de LUNA (funciona; parte sin verificar en el PC)
 - Voz en el navegador del PC y del celular, IA local con Ollama (qwen3:8b).
 - Memoria permanente, documentos (carpeta `conocimiento`), búsqueda en internet, notas, abrir programas.
 - **Habilidades**: LUNA escribe código nuevo para sí misma y Sergio lo aprueba con un botón.
@@ -21,6 +21,15 @@ Prioridad: **A** = alto impacto y pronto · **B** = intermedio · **C** = invest
 - Autodiagnóstico y revisión diaria por iniciativa propia.
 
 **Verificación:** responde por voz desde el celular, recuerda un dato después de reiniciar y crea una habilidad que funciona después de aprobarla.
+
+Estado real (auditoría del 24 de noviembre de 2026): verificado en el PC el cerebro local con herramientas, las habilidades de ejemplo, la revisión diaria y la voz en el navegador. Sin verificar todavía: acceso desde el celular, crear y aprobar habilidades en el PC y Claude como cerebro.
+
+## Plan maestro, fases 0 y 1 (en curso desde el 24 de noviembre de 2026)
+- Almacén SQLite (`datos/luna.db`): todas las conversaciones se guardan para siempre, con búsqueda y resúmenes diarios; olvidar archiva y no borra; respaldo diario.
+- Cerebros intercambiables (`lek/cerebros`): interfaz común, catálogo, salud con reintentos y pausa, respaldo local automático, métricas por llamada.
+- Privacidad: memoria, notas y documentos solo en el PC; a la nube solo la conversación.
+- Panel de Inteligencia en la interfaz.
+- Siguiente: evaluar OpenJarvis y traer solo lo útil (detección de hardware, selección de modelos, habilidades del estándar agentskills.io), sin su personalidad.
 
 ## Etapa 1 — Cimientos confiables (A)
 - Medir: tiempo de respuesta, herramientas que fallan, habilidades rechazadas.
