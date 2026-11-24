@@ -864,6 +864,15 @@ def desactivar_habilidad(h: Nombre, request: Request):
     return {"ok": True}
 
 
+@app.post("/api/apagar")
+def apagar(request: Request):
+    """Lo usa una versión nueva de Luna para reemplazar a la vieja. Solo desde el mismo PC."""
+    if (request.client.host if request.client else "") not in ("127.0.0.1", "::1"):
+        raise HTTPException(403, "Solo desde el mismo PC")
+    threading.Timer(0.5, lambda: os._exit(0)).start()
+    return {"ok": True}
+
+
 @app.post("/api/collar")
 async def collar(request: Request):
     """El collar manda un WAV con tu voz y recibe un WAV con la respuesta."""
@@ -948,12 +957,37 @@ def revisar_ollama() -> bool:
     return True
 
 
+def puerto_ocupado() -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", PUERTO)) == 0
+
+
+def liberar_puerto() -> bool:
+    """Si ya hay una Luna abierta (por ejemplo, una versión vieja), le pide que se apague."""
+    if not puerto_ocupado():
+        return True
+    print("  Ya había una Luna abierta: la cierro para arrancar esta versión...")
+    import urllib3
+    urllib3.disable_warnings()
+    try:  # solo hablamos con nuestro propio PC (localhost)
+        requests.post(f"https://localhost:{PUERTO}/api/apagar", verify=False, timeout=5)
+    except Exception:
+        pass
+    for _ in range(20):
+        if not puerto_ocupado():
+            return True
+        threading.Event().wait(0.5)
+    print(f"\n  El puerto {PUERTO} sigue ocupado. Cierra las otras ventanas negras de Luna"
+          " (o reinicia el PC) y vuelve a abrir iniciar.bat.\n")
+    return False
+
+
 def main():
     import uvicorn
     DATOS.mkdir(exist_ok=True)
     CONOCIMIENTO.mkdir(exist_ok=True)
     PROPUESTAS.mkdir(parents=True, exist_ok=True)
-    if not revisar_ollama():
+    if not revisar_ollama() or not liberar_puerto():
         input("  Presiona Enter para salir...")
         return
     bautizo()
