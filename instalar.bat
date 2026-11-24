@@ -42,7 +42,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist .env copy .env.ejemplo .env >nul
+if not exist .env copy env.ejemplo .env >nul
 
 rem ---------- Ollama
 call :buscar_ollama
