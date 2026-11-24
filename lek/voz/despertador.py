@@ -301,8 +301,10 @@ class Despertador:
                  enfriamiento_s: float = 2.0, silencio_fin_s: float = 0.8, espera_voz_s: float = 5.0,
                  max_pedido_s: float = 12.0, previo_s: float = 0.5, tono_s: float = 0.3,
                  umbral_min: float = 300.0, factor_umbral: float = 3.0, tono: bool = True,
-                 hilo_respuesta: bool = True, reloj=time.monotonic, registro=None):
+                 hilo_respuesta: bool = True, reloj=time.monotonic, registro=None,
+                 confianza_min: float = 0.6, usar_parciales: bool = True):
         self.nombre = nombre
+        self.confianza_min, self.usar_parciales = confianza_min, usar_parciales
         self.al_despertar = al_despertar or (lambda texto: "")
         self.sintetizar = sintetizar
         self.transcribir_wav = transcribir_wav
@@ -405,7 +407,9 @@ class Despertador:
     def _preparar(self) -> None:
         if self._reconocedor is None:
             self._estado = "cargando modelo"
-            self._reconocedor = ReconocedorVosk(buscar_modelo(self.carpeta_modelos), self.nombre)
+            self._reconocedor = ReconocedorVosk(buscar_modelo(self.carpeta_modelos), self.nombre,
+                                                confianza_min=self.confianza_min,
+                                                usar_parciales=self.usar_parciales)
         if self._fuente is None:
             self._fuente = FuenteMicrofono()
         self._fuente.abrir()

@@ -906,7 +906,8 @@ def contexto_pasado(texto: str, para_nube: bool, desde_id: int) -> str:
     return ("\n" + "\n\n".join(partes) + "\n") if partes else ""
 
 
-def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas: list | None = None) -> str:
+def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas: list | None = None,
+              fondo: bool = False) -> str:
     """Un turno de conversación. Todo se guarda para siempre; lo privado nunca va a la nube.
     voz=True: el texto viene del reconocimiento de voz (se corrige con lo aprendido y se interpreta)."""
     nota_voz = ""
@@ -915,6 +916,11 @@ def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas:
             texto = VOCABULARIO.aplicar(texto)
             alternativas = [VOCABULARIO.aplicar(a) for a in (alternativas or []) if isinstance(a, str)][:3]
             nota_voz = VOCABULARIO.nota(texto, alternativas)
+            if fondo:
+                nota_voz += (" Esto lo oyó la escucha en segundo plano, que a veces se activa con la TV, música, "
+                             "un video o gente hablando cerca. Si el texto no parece un pedido dirigido a ti "
+                             "(frase suelta sin sentido, pedazo de otra conversación o de un video), responde "
+                             f"solamente {IGNORAR} y nada más.")
         except Exception as e:
             print("  No pude preparar la nota de voz:", e)
     try:  # el enrutador clasifica el pedido (simple / normal / compleja / privada) sin llamar a ningún modelo
@@ -1956,6 +1962,19 @@ def main():
             DESPERTADOR.apagar()
 
 
+IGNORAR = "[IGNORAR]"
+
+
+def atender_voz_de_fondo(texto: str) -> str:
+    """Pedido oído por la escucha en segundo plano. Si era ruido (TV, video, otra conversación),
+    Luna no contesta en voz alta."""
+    r = limpiar_respuesta(responder(texto, "voz", voz=True, fondo=True))
+    if IGNORAR.lower() in r.lower():
+        print(f"  [voz] Parecía ruido de fondo, no respondo: {texto!r}")
+        return ""
+    return r
+
+
 def encender_despertador() -> bool:
     """'Luna' en segundo plano, sin ventana: si vosk + sounddevice + el modelo están instalados
     (instalar_voz.bat), se enciende sola. ASISTENTE_DESPERTADOR=no la apaga; =si la exige."""
@@ -1966,11 +1985,14 @@ def encender_despertador() -> bool:
     try:
         from lek.voz.despertador import Despertador
         d = Despertador(
-            "luna", lambda t: limpiar_respuesta(responder(t, "voz", voz=True)),
+            "luna", atender_voz_de_fondo,
             sintetizar=sintetizar if SISTEMA == "Windows" else None,
             transcribir_wav=transcribir_voz if usar_whisper_en_voz() else None,
             silencio_fin_s=float(os.getenv("DESPERTADOR_SILENCIO", "1.4")),   # deja pensar sin cortarte
-            max_pedido_s=float(os.getenv("DESPERTADOR_MAXIMO", "25")))
+            max_pedido_s=float(os.getenv("DESPERTADOR_MAXIMO", "25")),
+            # más exigente con "Luna": la TV o un video no deben despertarla
+            confianza_min=float(os.getenv("DESPERTADOR_CONFIANZA", "0.8")),
+            usar_parciales=os.getenv("DESPERTADOR_PARCIALES", "no").lower() in ("si", "sí", "1"))
         faltan = d.faltan()
         if faltan:
             if modo in ("si", "sí", "1", "true", "on"):

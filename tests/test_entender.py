@@ -118,3 +118,11 @@ def test_dictado_en_vivo_y_transcripcion_final():
     largos = [len(p) for p in vistos if p]
     assert len(set(largos)) >= 3 and largos == sorted(largos)   # se fue escribiendo mientras hablaba
     assert d.estado()["parcial"] == final
+
+
+def test_ruido_de_fondo_no_se_responde_en_voz_alta(luna):
+    local = luna.PROVEEDORES["ollama"]
+    local.respuestas = ["[IGNORAR]", "Son las tres."]
+    assert luna.atender_voz_de_fondo("mil would en chicago bulls") == ""
+    assert "segundo plano" in local.recibido[0]["mensajes"][-1]["content"]
+    assert luna.atender_voz_de_fondo("qué hora es") == "Son las tres."

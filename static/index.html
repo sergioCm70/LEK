@@ -1761,6 +1761,7 @@ async function leerMensajes() {
   for (const m of d.mensajes || []) {
     ultimoMensaje = Math.max(ultimoMensaje, m.id);
     if (m.cliente === cliente) continue;       // lo de esta pantalla ya se mostró
+    if (m.rol !== "usuario" && /\[IGNORAR\]/i.test(m.contenido)) { sistema("Lo que oí parecía ruido de fondo: no respondí"); continue; }
     const via = m.cliente === "voz" ? "🎙 dicho por ti (escucha en segundo plano)" : "desde otro dispositivo";
     if (m.rol === "usuario") burbujaOrigen(m.contenido, via); else burbuja(m.contenido, "j");
   }
