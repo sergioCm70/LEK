@@ -20,8 +20,8 @@ def test_nada_se_olvida_busca_en_conversaciones_viejas(luna):
     for i in range(30):
         luna.ALMACEN.guardar_mensaje("usuario", f"mensaje de relleno {i}")
     luna.responder("¿cuántas sillas tiene el auditorio?")
-    sistema = luna.PROVEEDORES["ollama"].recibido[0]["mensajes"][0]["content"]
-    assert "120 sillas" in sistema                       # traído al contexto aunque sea viejo
+    ultimo = luna.PROVEEDORES["ollama"].recibido[0]["mensajes"][-1]["content"]
+    assert "120 sillas" in ultimo                        # traído al contexto aunque sea viejo
     assert "120 sillas" in luna.buscar_conversaciones(consulta="sillas auditorio")
     assert "120 sillas" in luna.buscar_conversaciones(fecha="2026-10-01")
 
@@ -31,7 +31,7 @@ def test_nueva_conversacion_no_borra_nada(luna):
     luna.reiniciar(luna.Mensaje(texto="-"), Peticion())
     luna.responder("tema nuevo")
     enviados = luna.PROVEEDORES["ollama"].recibido[-1]["mensajes"]
-    assert [m["content"] for m in enviados[1:]] == ["tema nuevo"]
+    assert len(enviados) == 2 and enviados[1]["content"].endswith("tema nuevo")
     assert luna.ALMACEN.total_mensajes() == 4
 
 
@@ -103,3 +103,21 @@ def test_propuesta_con_ocho_puntos(luna):
     r = luna.proponer_mejora("Búsqueda semántica", problema="busco por palabras", solucion="embeddings",
                              impacto="alto", dificultad="intermedia")
     assert "impacto alto" in r and "todavía no es una mejora hecha" in r
+
+
+def test_el_comienzo_del_prompt_no_cambia_entre_turnos(luna):
+    """Para que Ollama reutilice lo ya procesado: mismo sistema en cada turno, la fecha va en el último mensaje."""
+    luna.responder("hola")
+    luna.responder("¿qué hora es?")
+    a, b = (r["mensajes"][0]["content"] for r in luna.PROVEEDORES["ollama"].recibido)
+    assert a == b
+    assert "hoy es" in luna.PROVEEDORES["ollama"].recibido[-1]["mensajes"][-1]["content"]
+    guardado = luna.ALMACEN.ultimos_mensajes(2)[0]["contenido"]
+    assert guardado == "¿qué hora es?"                    # la nota no se guarda en la conversación
+
+
+def test_catalogo_incluye_modelos_instalados():
+    from lek.cerebros.catalogo import catalogo
+    m = catalogo("qwen3:8b", ["qwen3:8b", "qwen3:4b", "nomic-embed-text:latest"])
+    assert "qwen3:4b" in m and m["qwen3:4b"]["ubicacion"] == "local"
+    assert "nomic-embed-text:latest" not in m

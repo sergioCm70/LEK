@@ -146,6 +146,16 @@
     <input type="number" id="intTope" min="0" step="0.5" style="width:100%;background:#03060c;border:1px solid var(--linea);color:var(--texto);border-radius:9px;padding:9px">
     <div class="botones"><button class="ok" id="intGuardar">Guardar selección</button></div>
   </div>
+  <h2 class="tit">Probar y comparar</h2>
+  <div class="hab">
+    <div class="dato">Luna hace las mismas preguntas a cada modelo y mide cuánto tarda; tú ves las respuestas y decides.</div>
+    <div class="botones"><button class="ok" id="intComparar">Comparar modelos</button></div>
+    <div id="intPruebas" class="dato" style="margin-top:8px"></div>
+    <label class="fila">Descargar otro modelo local (por ejemplo qwen3:4b)</label>
+    <div class="fila2"><div><input type="text" id="intNuevo" value="qwen3:4b" style="width:100%;background:#03060c;border:1px solid var(--linea);color:var(--texto);border-radius:9px;padding:9px"></div>
+    <div style="flex:0"><button class="neutro" id="intDescargar" style="border:none;border-radius:9px;padding:9px 13px;cursor:pointer">Descargar</button></div></div>
+    <div id="intDescargas" class="dato"></div>
+  </div>
   <h2 class="tit">Privacidad</h2>
   <div class="hab" id="intPriv"></div>
   <h2 class="tit">Recursos del PC</h2>
@@ -471,6 +481,28 @@ async function cargarInteligencia() {
   linea(rc, "GPU", r.gpu ? `${r.gpu.nombre}, ${r.gpu.vram_total_gb} GB de VRAM (${r.gpu.vram_usada_gb} GB en uso)` : "no se detectó una GPU NVIDIA");
   linea(rc, "Modelos cargados en Ollama", r.ollama_cargados.length ? r.ollama_cargados.map(c => `${c.modelo} (${c.tam_gb} GB, ${c.en_gpu_gb} GB en GPU)`).join(", ") : "ninguno ahora");
   if (r.disco_libre_gb !== undefined) linea(rc, "Disco libre", `${r.disco_libre_gb} GB`);
+  const pr = $("intPruebas"); pr.innerHTML = "";
+  for (const [modelo, r] of Object.entries(d.pruebas || {})) {
+    const caja = document.createElement("div"); caja.style.marginBottom = "8px";
+    const t = document.createElement("b"); t.textContent = modelo + ": ";
+    caja.appendChild(t);
+    caja.appendChild(document.createTextNode(r.estado === "lista" ? `mediana ${r.mediana_s} s (${r.tiempos.join(" / ")} s)` :
+      r.estado === "error" ? "error: " + r.detalle : `probando… ${r.tiempos.length} de ${d.preguntas_prueba.length}`));
+    (r.respuestas || []).forEach((resp, i) => {
+      const q = document.createElement("div"); q.style.marginLeft = "10px";
+      q.textContent = `• ${d.preguntas_prueba[i]} → ${resp}`; caja.appendChild(q);
+    });
+    pr.appendChild(caja);
+  }
+  const dc = $("intDescargas"); dc.innerHTML = "";
+  for (const [modelo, x] of Object.entries(d.descargas || {})) {
+    const l = document.createElement("div");
+    l.textContent = `${modelo}: ${x.estado === "lista" ? "descargado" : x.estado === "error" ? "error: " + x.detalle : x.pct + " % (" + x.detalle + ")"}`;
+    dc.appendChild(l);
+  }
+  const ocupado = Object.values(d.pruebas || {}).some(r => r.estado === "probando") || Object.values(d.descargas || {}).some(x => x.estado === "descargando");
+  clearTimeout(window.__refrescoInt);
+  if (ocupado && $("intel").style.display === "block") window.__refrescoInt = setTimeout(cargarInteligencia, 3000);
   const tb = $("intCambios"); tb.innerHTML = "";
   if (!d.cambios.length) { const tr = tb.insertRow(); tr.insertCell().textContent = "Sin cambios todavía."; }
   for (const c of d.cambios) {
@@ -483,6 +515,16 @@ async function cargarInteligencia() {
 $("intGuardar").onclick = async () => {
   try { await api("/api/inteligencia", { principal: $("intPrincipal").value, respaldo: $("intRespaldo").value, presupuesto_mensual_usd: parseFloat($("intTope").value || "0") }); }
   catch (e) { alert(e.message.includes("PIN") || e.message.includes("403") ? "Para cambiar esto desde el celular, ponle un PIN a Luna." : "No se pudo: " + e.message); }
+  cargarInteligencia();
+};
+$("intComparar").onclick = async () => {
+  try { await api("/api/inteligencia/probar", {}); } catch (e) { alert("Para esto ponle un PIN a Luna o hazlo desde el PC."); }
+  cargarInteligencia();
+};
+$("intDescargar").onclick = async () => {
+  const m = $("intNuevo").value.trim(); if (!m) return;
+  if (!confirm(`¿Descargar ${m}? Puede ocupar varios GB.`)) return;
+  try { await api("/api/modelos/descargar", { modelo: m }); } catch (e) { alert("No se pudo: " + e.message); }
   cargarInteligencia();
 };
 $("verInt").onclick = () => { $("intel").style.display = "block"; cargarInteligencia(); };

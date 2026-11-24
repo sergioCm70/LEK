@@ -61,8 +61,13 @@ class CerebroFalso(Proveedor):
         r.modelo, r.proveedor = modelo, self.nombre
         return r
 
+    descargas = {}
+
     def modelos_cargados(self):
         return []
+
+    def modelos_instalados(self):
+        return ["qwen3:8b"]
 
 
 @pytest.fixture

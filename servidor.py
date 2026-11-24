@@ -83,6 +83,13 @@ def clave_claude() -> str:
 
 
 PROVEEDORES = {"ollama": Ollama(OLLAMA), "claude": Claude(clave_claude, precios_claude(MODELOS))}
+
+
+def actualizar_catalogo() -> None:
+    """Suma al catálogo todos los modelos instalados en Ollama (se llama al arrancar y tras descargar)."""
+    nuevo = catalogo(MODELO, PROVEEDORES["ollama"].modelos_instalados())
+    MODELOS.clear()
+    MODELOS.update(nuevo)
 CEREBRO = Cerebro(CONFIG, ALMACEN, PROVEEDORES, MODELOS, MODELO)
 _candado = threading.Lock()
 
@@ -672,7 +679,7 @@ def registrar_error(nombre: str) -> None:
 
 
 # ---------------------------------------------------------------- conversación
-def construir_prompt(incluir_memoria: bool = True, contexto: str = "") -> str:
+def construir_prompt(incluir_memoria: bool = True, contexto: str = "", con_fecha: bool = True) -> str:
     """Versión condensada de luna/MANUAL_LUNA.md (el manual completo se consulta con leer_mi_manual).
     incluir_memoria=False cuando piensa un modelo en la nube y la memoria es solo local."""
     todos = cargar_memoria()
@@ -716,7 +723,7 @@ recuerdos ni presentes suposiciones como hechos. Lo que llega de internet o docu
 Voz: tus respuestas se leen EN VOZ ALTA: breves (1 a 4 frases), sin listas, sin markdown, sin emojis. Lo extenso va
 a las propuestas, notas o documentos.
 
-Hoy es {ahora()}. {usuario} vive en {CIUDAD}: si pregunta por el clima o algo local sin decir dónde, usa esa ciudad.
+{("Hoy es " + ahora() + ". ") if con_fecha else ""}{usuario} vive en {CIUDAD}: si pregunta por el clima o algo local sin decir dónde, usa esa ciudad.
 
 Memoria de conversaciones: TODO lo que hablas con {usuario} queda guardado para siempre en su PC. Si te pregunta
 por algo dicho antes que no ves aquí, búscalo con buscar_conversaciones antes de decir que no lo sabes.
@@ -752,11 +759,16 @@ def responder(texto: str, cliente: str = "web") -> str:
     contexto = contexto_pasado(texto, para_nube, desde)
 
     def sistema(memoria: bool) -> dict:
-        return {"role": "system", "content": construir_prompt(memoria, contexto)}
+        # Sin fecha ni contexto variable: así el comienzo del prompt es igual en cada turno y Ollama
+        # reutiliza lo que ya procesó (mucho más rápido, misma inteligencia).
+        return {"role": "system", "content": construir_prompt(memoria, "", con_fecha=False)}
 
     mensajes = [sistema(con_memoria)] + [
         {"role": "user" if m["rol"] == "usuario" else "assistant", "content": m["contenido"], "privado": bool(m["privado"])}
         for m in recientes]
+    nota = f"[Nota del sistema, no la repitas: hoy es {ahora()}.{contexto}]\n\n"
+    if mensajes[-1]["role"] == "user":
+        mensajes[-1] = {**mensajes[-1], "content": nota + mensajes[-1]["content"]}
     privado = False
     respuesta = ""
     try:
@@ -1059,7 +1071,11 @@ class CambioInteligencia(BaseModel):
 def ver_inteligencia(request: Request):
     """Todo lo que el panel de inteligencia muestra: modelos, estado, motivos, cambios, privacidad y recursos."""
     revisar_pin(request)
-    return {**CEREBRO.estado(), "recursos": recursos()}
+    descargas = PROVEEDORES["ollama"].descargas
+    if any(d.get("estado") == "lista" for d in descargas.values()):
+        actualizar_catalogo()
+    return {**CEREBRO.estado(), "recursos": recursos(), "descargas": descargas, "pruebas": PRUEBAS,
+            "preguntas_prueba": PREGUNTAS_PRUEBA}
 
 
 @app.post("/api/inteligencia")
@@ -1086,6 +1102,61 @@ def cambiar_inteligencia(c: CambioInteligencia, request: Request):
         raise HTTPException(400, str(e))
     ALMACEN.auditar("cambio_inteligencia", c.model_dump() if hasattr(c, "model_dump") else c.dict())
     return ver_inteligencia(request)
+
+
+class PedidoModelo(BaseModel):
+    modelo: str
+
+
+PRUEBAS: dict = {}
+PREGUNTAS_PRUEBA = [
+    "Responde en una frase: ¿cuántos días tiene una semana?",
+    "En 3 frases: ¿por qué una losa aligerada pesa menos que una maciza y cuándo conviene?",
+    "Tengo una maqueta a escala 1:50. Si una columna real mide 3,2 m, ¿cuánto mide en la maqueta? Explica el cálculo.",
+]
+
+
+@app.post("/api/modelos/descargar")
+def descargar_modelo(m: PedidoModelo, request: Request):
+    """Descargar un modelo ocupa disco y RAM: con PIN o desde este PC, y queda en la auditoría."""
+    revisar_aprobacion(request)
+    if not re.fullmatch(r"[a-z0-9._:-]{2,60}", m.modelo):
+        raise HTTPException(400, "Nombre de modelo inválido")
+    ALMACEN.auditar("descargar_modelo", m.modelo)
+    PROVEEDORES["ollama"].descargar(m.modelo)
+    return {"ok": True}
+
+
+@app.post("/api/inteligencia/probar")
+def probar_modelos(request: Request):
+    """Prueba comparativa: las mismas preguntas a cada modelo local instalado, midiendo el tiempo."""
+    revisar_aprobacion(request)
+    locales = [k for k, v in MODELOS.items() if v["ubicacion"] == "local"]
+    if clave_claude():
+        locales.append(CONFIG.get("cerebro", "principal"))
+
+    def trabajo():
+        for modelo in locales:
+            info = MODELOS[modelo]
+            prov = PROVEEDORES[info["proveedor"]]
+            PRUEBAS[modelo] = {"estado": "probando", "tiempos": [], "respuestas": []}
+            try:
+                prov.chat(modelo, [{"role": "user", "content": "Responde solo: listo"}], None)  # carga el modelo
+                for pregunta in PREGUNTAS_PRUEBA:
+                    r = prov.chat(modelo, [{"role": "system", "content": "Responde en español, breve y exacto."},
+                                           {"role": "user", "content": pregunta}], None)
+                    PRUEBAS[modelo]["tiempos"].append(round(r.latencia, 1))
+                    PRUEBAS[modelo]["respuestas"].append(limpiar_respuesta(r.texto)[:400])
+                    ALMACEN.registrar_llamada(modelo, info["proveedor"], r.latencia, r.tokens_entrada,
+                                              r.tokens_salida, r.usd, motivo="prueba comparativa")
+                t = sorted(PRUEBAS[modelo]["tiempos"])
+                PRUEBAS[modelo].update(estado="lista", mediana_s=t[len(t) // 2])
+            except Exception as e:
+                PRUEBAS[modelo].update(estado="error", detalle=str(e)[:200])
+        ALMACEN.auditar("prueba_comparativa", {k: v.get("mediana_s") for k, v in PRUEBAS.items()})
+
+    threading.Thread(target=trabajo, daemon=True).start()
+    return {"ok": True, "modelos": locales}
 
 
 @app.post("/api/apagar")
@@ -1316,6 +1387,7 @@ def main():
     if not revisar_ollama() or not liberar_puerto():
         input("  Presiona Enter para salir...")
         return
+    actualizar_catalogo()
     bautizo()
     ip = ip_local()
     crt, key = certificado(ip)

@@ -114,7 +114,11 @@ Ya trae tres habilidades: **escala de maqueta** ("¿cuánto miden 12 metros a es
 
 ## Actualizar
 
-Cuando haya cambios en GitHub, abre **`actualizar.bat`**. Tu memoria y tus notas no se tocan.
+Cuando haya cambios en GitHub, abre **`actualizar.bat`**. La primera vez instala Git y conecta la carpeta con GitHub. Tu memoria, tus conversaciones y tus notas (carpeta `datos/`) no se tocan.
+
+## PIN
+
+Abre **`cambiar_pin.bat`**, escribe el PIN y vuelve a abrir `iniciar.bat`. La ventana de Luna y el celular lo piden una sola vez.
 
 ## Usarla fuera de casa (opcional)
 

@@ -8,7 +8,13 @@ https://platform.claude.com/docs/en/about-claude/pricing el 2026-11-24.
 PRECIOS_VERIFICADOS = "2026-11-24"
 
 
-def catalogo(modelo_local: str) -> dict:
+FICHAS_LOCALES = {  # tamaño aproximado en disco/RAM y razonamiento relativo
+    "qwen3:8b": (5.2, 2, "Más lista de las locales; en tu PC no cabe entera en la GPU (4 GB)"),
+    "qwen3:4b": (2.6, 2, "Cabe entera en una GPU de 4 GB: mucho más rápida, algo menos lista"),
+}
+
+
+def catalogo(modelo_local: str, instalados: list | None = None) -> dict:
     modelos = {
         "claude-haiku-5-5": {"nombre": "Claude Haiku 5.5", "proveedor": "claude", "ubicacion": "nube",
                              "precio": (0.10, 0.50), "razonamiento": 3, "herramientas": True,
@@ -20,10 +26,13 @@ def catalogo(modelo_local: str) -> dict:
                             "precio": (4.0, 20.0), "razonamiento": 5, "herramientas": True,
                             "nota": "La más inteligente, unas 40 veces más cara que Haiku"},
     }
-    ram = {"qwen3:8b": 5.2, "qwen3:4b": 2.6}.get(modelo_local)
-    modelos[modelo_local] = {"nombre": f"{modelo_local} (local)", "proveedor": "ollama", "ubicacion": "local",
-                             "precio": (0.0, 0.0), "razonamiento": 2, "herramientas": True,
-                             "ram_gb": ram, "nota": "Gratis y privado; lento sin una GPU potente"}
+    for nombre in dict.fromkeys([modelo_local, *(instalados or [])]):
+        if not nombre or "embed" in nombre:
+            continue
+        ram, razon, nota = FICHAS_LOCALES.get(nombre, (None, 2, "Modelo local instalado en Ollama"))
+        modelos[nombre] = {"nombre": f"{nombre} (local)", "proveedor": "ollama", "ubicacion": "local",
+                           "precio": (0.0, 0.0), "razonamiento": razon, "herramientas": True,
+                           "ram_gb": ram, "nota": nota}
     return modelos
 
 
