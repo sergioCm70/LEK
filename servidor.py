@@ -40,7 +40,9 @@ OLLAMA = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 PIN = os.getenv("ASISTENTE_PIN", "").strip()
 LLAMARME = os.getenv("ASISTENTE_LLAMARME", "").strip()
 NOMBRE_FIJO = os.getenv("ASISTENTE_NOMBRE", "").strip()
-PUERTO = int(os.getenv("ASISTENTE_PUERTO", "8443"))
+PUERTO = int(os.getenv("ASISTENTE_PUERTO", "8443"))          # celular (HTTPS)
+PUERTO_PC = int(os.getenv("ASISTENTE_PUERTO_PC", "8090"))     # este PC (sin avisos de certificado)
+ABRIR_VENTANA = os.getenv("ASISTENTE_ABRIR_VENTANA", "si").strip().lower() not in ("no", "0", "false")
 WHISPER_MODELO = os.getenv("WHISPER_MODELO", "small").strip()
 
 # Todo lo personal vive en datos/ (git lo ignora: nunca se sube a GitHub)
@@ -945,9 +947,17 @@ def certificado(ip: str) -> tuple[str, str]:
 
 
 def revisar_ollama() -> bool:
-    try:
-        modelos = [m.get("name", "") for m in requests.get(f"{OLLAMA}/api/tags", timeout=5).json().get("models", [])]
-    except Exception:
+    modelos = None
+    for intento in range(45):  # al prender el PC, Ollama puede tardar en arrancar
+        try:
+            modelos = [m.get("name", "") for m in requests.get(f"{OLLAMA}/api/tags", timeout=5).json().get("models", [])]
+            break
+        except Exception:
+            if intento == 0:
+                print("  Esperando a Ollama...")
+                encender_ollama()
+            threading.Event().wait(2)
+    if modelos is None:
         print("\n  No encuentro Ollama. Ábrelo (o instálalo desde https://ollama.com) y vuelve a iniciar.\n")
         return False
     base = MODELO if ":" in MODELO else MODELO + ":latest"
@@ -955,6 +965,49 @@ def revisar_ollama() -> bool:
         print(f"\n  Falta el modelo {MODELO}. Descárgalo con:  ollama pull {MODELO}\n")
         return False
     return True
+
+
+def encender_ollama() -> None:
+    if SISTEMA != "Windows":
+        return
+    for ruta in (pathlib.Path(os.getenv("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama app.exe",
+                 pathlib.Path(os.getenv("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"):
+        if ruta.exists():
+            try:
+                if ruta.name == "ollama.exe":
+                    subprocess.Popen([str(ruta), "serve"], creationflags=0x08000000)  # sin ventana
+                else:
+                    os.startfile(str(ruta))  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            return
+
+
+def calentar_cerebro() -> None:
+    """Carga el modelo en memoria apenas arranca, para que la primera respuesta no tarde."""
+    try:
+        requests.post(f"{OLLAMA}/api/generate", json={"model": MODELO, "prompt": "", "keep_alive": "30m"}, timeout=300)
+    except Exception:
+        pass
+
+
+def abrir_ventana_luna() -> None:
+    """Abre a Luna en su propia ventana (Edge o Chrome en modo app), escuchando su nombre.
+    Usa un perfil aparte para que el permiso del micrófono se recuerde y pueda hablar sin tocar nada."""
+    url = f"http://localhost:{PUERTO_PC}/?manos=1"
+    if SISTEMA == "Windows":
+        local, pf, pf86 = os.getenv("LOCALAPPDATA", ""), os.getenv("ProgramFiles", ""), os.getenv("ProgramFiles(x86)", "")
+        candidatos = [pathlib.Path(pf86, "Microsoft/Edge/Application/msedge.exe"), pathlib.Path(pf, "Microsoft/Edge/Application/msedge.exe"),
+                      pathlib.Path(pf, "Google/Chrome/Application/chrome.exe"), pathlib.Path(pf86, "Google/Chrome/Application/chrome.exe"),
+                      pathlib.Path(local, "Google/Chrome/Application/chrome.exe")]
+        for nav in candidatos:
+            if nav.exists():
+                perfil = DATOS / "navegador"
+                subprocess.Popen([str(nav), f"--app={url}", f"--user-data-dir={perfil}",
+                                  "--autoplay-policy=no-user-gesture-required", "--window-size=460,820",
+                                  "--no-first-run", "--no-default-browser-check"])
+                return
+    webbrowser.open(url)
 
 
 def puerto_ocupado() -> bool:
@@ -1024,17 +1077,28 @@ def main():
     print(f"  {mi_nombre().upper()} en línea  (cerebro: {MODELO}, gratis y local)")
     if ident.get("por_que") and not NOMBRE_FIJO:
         print(f'  "{ident["por_que"]}"')
-    print(f"  En este PC:    https://localhost:{PUERTO}")
+    print(f"  En este PC:    http://localhost:{PUERTO_PC}")
     print(f"  En el celular: https://{ip}:{PUERTO}   (misma Wi-Fi)")
     print(f"  PIN: {'activado' if PIN else 'sin PIN (ponlo en .env)'}")
     print(f"  Habilidades activas: {len(cargar_habilidades())}")
     print("  Para apagar: cierra esta ventana o Ctrl+C")
     print("  " + "=" * 52 + "\n")
-    threading.Timer(1.5, lambda: webbrowser.open(f"https://localhost:{PUERTO}")).start()
+    threading.Thread(target=calentar_cerebro, daemon=True).start()
+    if ABRIR_VENTANA:
+        threading.Timer(2, abrir_ventana_luna).start()
     revision = threading.Timer(180, revision_diaria)  # iniciativa propia, una vez al día
     revision.daemon = True
     revision.start()
-    uvicorn.run(app, host="0.0.0.0", port=PUERTO, ssl_certfile=crt, ssl_keyfile=key, log_level="warning")
+    import asyncio
+
+    async def correr():
+        # HTTPS para el celular y el collar; HTTP solo para este mismo PC (localhost es seguro para el micrófono)
+        celular = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=PUERTO, ssl_certfile=crt, ssl_keyfile=key,
+                                                log_level="warning"))
+        pc = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PUERTO_PC, log_level="warning"))
+        await asyncio.gather(celular.serve(), pc.serve())
+
+    asyncio.run(correr())
 
 
 if __name__ == "__main__":

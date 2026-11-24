@@ -41,11 +41,17 @@ Abre **`iniciar.bat`**. La primera vez verás algo así:
   En el celular: https://192.168.1.50:8443   (misma Wi-Fi)
 ```
 
-- **En el PC:** se abre solo en el navegador (usa Chrome o Edge).
+- **En el PC:** se abre sola en su propia ventana (`http://localhost:8090`), ya escuchando: di **"Luna…"** y lo que necesitas. La primera vez dale **Permitir** al micrófono; queda recordado.
 - **En el celular:** abre la dirección "En el celular" en Chrome, conectado a la misma Wi-Fi.
 - **Aviso de "conexión no privada":** es normal, porque el certificado lo creó tu propio PC. Toca **Configuración avanzada → Continuar**. Hace falta HTTPS para que el celular deje usar el micrófono.
 - **Firewall:** la primera vez Windows pregunta si permite Python en la red. Marca **Redes privadas → Permitir**.
 - Toca el núcleo y habla, o escribe. Con **Manos libres** solo tienes que decir su nombre.
+
+## Que arranque sola al prender el PC
+
+Abre **`inicio_automatico.bat`** una vez. Desde entonces, al prender el PC Luna arranca minimizada, abre su ventana y saluda: "Estoy lista. Di Luna cuando me necesites". Para quitarlo, borra `Luna.bat` de la carpeta de Inicio de Windows (`Win + R` → `shell:startup`).
+
+Ojo: la escucha por voz del navegador usa el servicio de reconocimiento de Microsoft o Google, así que lo que se oye mientras escucha pasa por ellos. Si no la quieres escuchando, desmarca **Manos libres**.
 
 ## Enseñarle cosas
 

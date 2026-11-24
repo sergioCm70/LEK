@@ -232,6 +232,7 @@ $("nucleo").onclick = () => {
 $("formulario").onsubmit = e => { e.preventDefault(); const t = $("entrada").value; $("entrada").value = ""; enviar(t); };
 $("manos").onchange = () => {
   continuo = $("manos").checked;
+  guardar("manos", continuo ? "1" : "0");
   dejarDeEscuchar();
   if (continuo) setTimeout(escuchar, 300); else reposo();
 };
@@ -284,10 +285,19 @@ async function cargarPanel() {
 $("verHab").onclick = () => { $("panel").classList.add("abierto"); cargarPanel(); };
 $("cerrarPanel").onclick = () => $("panel").classList.remove("abierto");
 
-api("/api/ping").then(d => {
+const pideManos = new URLSearchParams(location.search).get("manos") === "1" || leer("manos") === "1";
+api("/api/ping").then(async d => {
   ponerNombre(d.asistente);
-  burbuja(`Hola${d.usuario ? ", " + d.usuario : ""}, soy ${d.asistente}. ¿En qué te ayudo?`, "j");
-  reposo();
+  if (pideManos && SR) {
+    const saludo = `Estoy lista${d.usuario ? ", " + d.usuario : ""}. Di ${d.asistente} cuando me necesites.`;
+    burbuja(saludo, "j");
+    $("manos").checked = true; continuo = true; guardar("manos", "1");
+    await decir(saludo);
+    escuchar();
+  } else {
+    burbuja(`Hola${d.usuario ? ", " + d.usuario : ""}, soy ${d.asistente}. ¿En qué te ayudo?`, "j");
+    reposo();
+  }
 }).catch(() => estado("Sin conexión con el PC"));
 </script>
 </body>
