@@ -60,6 +60,16 @@ Abre **`iniciar.bat`**. La primera vez verás algo así:
 
 Tus datos personales (memoria, notas, nombre que eligió, certificados) quedan en la carpeta `datos/`, y tus documentos en `conocimiento/`. **Ninguna de las dos se sube a GitHub**, igual que el archivo `.env`.
 
+## Quién es Luna
+
+Su identidad completa está en [`luna/MANUAL_LUNA.md`](luna/MANUAL_LUNA.md): misión, iniciativa, automejora, niveles de autorización y desarrollo de LEK. En cada conversación lleva una versión condensada, para seguir rápida, y consulta el manual completo cuando lo necesita.
+
+- **Propuestas de mejora** con los 8 puntos del manual (problema, oportunidad, solución, recursos, implementación, riesgos, resultado y verificación), clasificadas por impacto y dificultad.
+- **Revisión diaria por iniciativa propia:** 3 minutos después de iniciar, una vez al día, revisa su estado y las últimas conversaciones y, si encuentra algo valioso, registra una propuesta. Nunca cambia nada sola.
+- **Autodiagnóstico:** "Luna, haz un diagnóstico" te dice RAM, disco, velocidad, fallos y habilidades.
+- **Tu información:** "¿qué recuerdas de mí?" te muestra todo; "olvida lo de…" lo borra.
+- **Hoja de ruta de LEK:** [`luna/HOJA_DE_RUTA_LEK.md`](luna/HOJA_DE_RUTA_LEK.md). Los avances verificados quedan en `datos/bitacora_lek.md`.
+
 ## LEK: Luna se mejora sola
 
 Pídele algo que todavía no sepa hacer ("crea una habilidad para convertir pulgadas a centímetros"), o deja que ella lo note sola. Entonces:
@@ -72,7 +82,7 @@ Si una habilidad borra archivos, ejecuta programas o toca tus ajustes, aparece u
 
 Por seguridad, sin PIN solo se puede aprobar desde el mismo PC, no desde el celular.
 
-Las mejoras grandes que ella quiere para sí misma quedan anotadas en la sección **Ideas** de esa misma pantalla, para programarlas después.
+Sus propuestas de mejora más grandes aparecen en esa misma pantalla, para programarlas después.
 
 Ya trae tres habilidades: **escala de maqueta** ("¿cuánto miden 12 metros a escala 1:100?"), **clima** y **días que faltan** para una fecha.
 
@@ -97,7 +107,8 @@ Instala **Tailscale** (gratis) en el PC y en el celular, con la misma cuenta. En
 servidor.py          el cerebro: conversación, herramientas, memoria
 static/index.html    la cara: núcleo, voz y chat
 programas.json       programas que puede abrir
-habilidades/         habilidades aprobadas (y propuestas/ las que esperan)
+habilidades/         habilidades aprobadas (propuestas/ esperan, versiones/ son respaldos)
+luna/                su manual de identidad y la hoja de ruta de LEK
 conocimiento/        tus documentos (privado)
 datos/               su memoria, notas y nombre (privado, se crea solo)
 collar/              firmware y guía del collar de IA

@@ -85,7 +85,7 @@
   <div style="color:var(--tenue);font-size:.88rem">Cuando le falta algo, ella misma escribe una habilidad. Revísala y apruébala aquí.</div>
   <h2>Esperando tu aprobación</h2><div id="propuestas"></div>
   <h2>Activas</h2><div id="activas"></div>
-  <h2>Ideas que tiene para mejorarse</h2><div id="ideas"></div>
+  <h2>Propuestas de mejora (para ella y para LEK)</h2><div id="ideas"></div>
 </div></div>
 
 <script>
@@ -278,7 +278,7 @@ async function cargarPanel() {
       if (!lista.length) $(id).textContent = vacio;
       lista.forEach(h => $(id).appendChild(tarjeta(h, tipo)));
     }
-    $("ideas").textContent = d.ideas || "Todavía no ha anotado ideas.";
+    $("ideas").textContent = d.ideas || "Todavía no ha registrado propuestas.";
   } catch (e) { $("propuestas").textContent = "No pude cargar las habilidades."; }
 }
 $("verHab").onclick = () => { $("panel").classList.add("abierto"); cargarPanel(); };
