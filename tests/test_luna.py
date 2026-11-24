@@ -121,3 +121,24 @@ def test_catalogo_incluye_modelos_instalados():
     m = catalogo("qwen3:8b", ["qwen3:8b", "qwen3:4b", "nomic-embed-text:latest"])
     assert "qwen3:4b" in m and m["qwen3:4b"]["ubicacion"] == "local"
     assert "nomic-embed-text:latest" not in m
+
+
+def test_fuera_de_casa_exige_pin(luna):
+    remoto, casa = Peticion(host="100.101.102.103"), Peticion(host="192.168.20.30")
+    with pytest.raises(Exception) as e:
+        luna.revisar_pin(remoto)
+    assert getattr(e.value, "status_code", None) == 403
+    luna.revisar_pin(casa)                                   # en la Wi-Fi de casa, sin PIN, sigue igual
+    luna.PIN = "4321"
+    with pytest.raises(Exception):
+        luna.revisar_pin(remoto)
+    luna.revisar_pin(Peticion(host="100.101.102.103", pin="4321"))
+
+
+def test_certificado_incluye_nombre_de_tailscale(luna):
+    from cryptography import x509
+    crt, _ = luna.certificado("192.168.20.21", ("100.101.102.103",), ("zaza.tail1234.ts.net",))
+    cert = x509.load_pem_x509_certificate(open(crt, "rb").read())
+    alt = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert "zaza.tail1234.ts.net" in alt.get_values_for_type(x509.DNSName)
+    assert any(str(i) == "100.101.102.103" for i in alt.get_values_for_type(x509.IPAddress))

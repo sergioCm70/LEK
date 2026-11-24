@@ -921,7 +921,21 @@ def sintetizar(texto: str) -> bytes:
 
 
 # ---------------------------------------------------------------- web
+RED_TAILSCALE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def es_remoto(request: Request) -> bool:
+    """True si la petición llega por Tailscale (desde fuera de la casa)."""
+    try:
+        return ipaddress.ip_address(request.client.host) in RED_TAILSCALE
+    except Exception:
+        return False
+
+
 def revisar_pin(request: Request) -> None:
+    if not PIN and es_remoto(request):
+        raise HTTPException(status_code=403, detail="Para usar a Luna fuera de casa primero ponle un PIN: "
+                                                    "en el PC abre cambiar_pin.bat.")
     if PIN and not secrets.compare_digest(request.headers.get("x-asistente-pin", ""), PIN):
         raise HTTPException(status_code=401, detail="PIN incorrecto")
 
@@ -1210,7 +1224,27 @@ def ip_local() -> str:
         s.close()
 
 
-def certificado(ip: str) -> tuple[str, str]:
+def tailscale_info() -> dict:
+    """Dirección y nombre de este PC en Tailscale, si está instalado y con sesión iniciada."""
+    exe = "tailscale"
+    if SISTEMA == "Windows":
+        candidato = pathlib.Path(os.getenv("ProgramFiles", r"C:\Program Files")) / "Tailscale" / "tailscale.exe"
+        if candidato.exists():
+            exe = str(candidato)
+    try:
+        r = subprocess.run([exe, "status", "--json"], capture_output=True, text=True, timeout=8,
+                           creationflags=0x08000000 if SISTEMA == "Windows" else 0)
+        datos = json.loads(r.stdout or "{}")
+        yo = datos.get("Self") or {}
+        ips = [i for i in yo.get("TailscaleIPs", []) if ":" not in i]
+        if datos.get("BackendState") != "Running" or not ips:
+            return {}
+        return {"ip": ips[0], "nombre": (yo.get("DNSName") or "").rstrip("."), "corto": yo.get("HostName", "")}
+    except Exception:
+        return {}
+
+
+def certificado(ip: str, extra_ips: tuple = (), extra_nombres: tuple = ()) -> tuple[str, str]:
     """HTTPS hace falta para que el celular deje usar el micrófono. Se crea solo."""
     from cryptography import x509
     from cryptography.x509.oid import NameOID
@@ -1219,14 +1253,16 @@ def certificado(ip: str) -> tuple[str, str]:
 
     CERTS.mkdir(parents=True, exist_ok=True)
     crt, key, marca = CERTS / "cert.pem", CERTS / "key.pem", CERTS / "ip.txt"
-    if crt.exists() and key.exists() and marca.exists() and marca.read_text() == ip:
+    firma = ",".join([ip, *extra_ips, *extra_nombres])
+    if crt.exists() and key.exists() and marca.exists() and marca.read_text() == firma:
         return str(crt), str(key)
     clave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     nombre = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Asistente LEK")])
     hoy = datetime.datetime.now(datetime.timezone.utc)
-    alt = x509.SubjectAlternativeName([
-        x509.DNSName("localhost"), x509.DNSName(socket.gethostname()),
-        x509.IPAddress(ipaddress.ip_address("127.0.0.1")), x509.IPAddress(ipaddress.ip_address(ip))])
+    nombres = ["localhost", socket.gethostname(), *[n for n in extra_nombres if n]]
+    direcciones = ["127.0.0.1", ip, *[i for i in extra_ips if i]]
+    alt = x509.SubjectAlternativeName([x509.DNSName(n) for n in dict.fromkeys(nombres)] +
+                                      [x509.IPAddress(ipaddress.ip_address(i)) for i in dict.fromkeys(direcciones)])
     cert = (x509.CertificateBuilder().subject_name(nombre).issuer_name(nombre)
             .public_key(clave.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(hoy - datetime.timedelta(days=1))
@@ -1235,7 +1271,7 @@ def certificado(ip: str) -> tuple[str, str]:
     crt.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     key.write_bytes(clave.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
                                         serialization.NoEncryption()))
-    marca.write_text(ip)
+    marca.write_text(firma)
     return str(crt), str(key)
 
 
@@ -1390,7 +1426,8 @@ def main():
     actualizar_catalogo()
     bautizo()
     ip = ip_local()
-    crt, key = certificado(ip)
+    ts = tailscale_info()
+    crt, key = certificado(ip, (ts.get("ip", ""),), (ts.get("nombre", ""), ts.get("corto", "")))
     ident = cargar_identidad()
     print("\n  " + "=" * 52)
     principal = CONFIG.get("cerebro", "principal")
@@ -1400,6 +1437,10 @@ def main():
         print(f'  "{ident["por_que"]}"')
     print(f"  En este PC:    http://localhost:{PUERTO_PC}")
     print(f"  En el celular: https://{ip}:{PUERTO}   (misma Wi-Fi)")
+    if ts:
+        print(f"  Desde la calle (Tailscale): https://{ts['nombre'] or ts['ip']}:{PUERTO}")
+        if not PIN:
+            print("  OJO: fuera de casa Luna no responde hasta que le pongas un PIN (cambiar_pin.bat)")
     print(f"  PIN: {'activado' if PIN else 'sin PIN (ponlo en .env)'}")
     print(f"  Habilidades activas: {len(cargar_habilidades())}")
     print(f"  Memoria: {ALMACEN.total_mensajes()} mensajes guardados para siempre, {len(cargar_memoria())} recuerdos")

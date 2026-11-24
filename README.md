@@ -120,9 +120,13 @@ Cuando haya cambios en GitHub, abre **`actualizar.bat`**. La primera vez instala
 
 Abre **`cambiar_pin.bat`**, escribe el PIN y vuelve a abrir `iniciar.bat`. La ventana de Luna y el celular lo piden una sola vez.
 
-## Usarla fuera de casa (opcional)
+## Usarla fuera de casa
 
-Instala **Tailscale** (gratis) en el PC y en el celular, con la misma cuenta. En el celular abre `https://NOMBRE-DE-TU-PC:8443` (el nombre aparece en la app de Tailscale). Funciona desde cualquier red mientras el PC esté prendido con el asistente abierto.
+1. En el PC abre **`instalar_tailscale.bat`** (pide permiso de administrador una vez). Instala Tailscale, abre el puerto de Luna **solo** para Tailscale y tu Wi-Fi de casa, y te pide iniciar sesión.
+2. En el celular instala la app **Tailscale** con la misma cuenta.
+3. Abre `iniciar.bat`: la línea **"Desde la calle (Tailscale)"** trae el link.
+
+Fuera de casa Luna exige PIN (`cambiar_pin.bat`). El PC debe estar prendido, sin suspenderse, con Luna abierta.
 
 ## Problemas comunes
 

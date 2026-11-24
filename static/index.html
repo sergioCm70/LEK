@@ -289,6 +289,10 @@ async function api(ruta, cuerpo) {
     pin = p.trim(); guardar("pin", pin);
     return api(ruta, cuerpo);
   }
+  if (r.status === 403) {
+    let m = "Acceso no permitido"; try { m = (await r.json()).detail || m; } catch (e) {}
+    burbuja(m, "aviso"); throw new Error(m);
+  }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
