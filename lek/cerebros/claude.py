@@ -69,7 +69,7 @@ class Claude(Proveedor):
                                 "input_schema": t["function"]["parameters"]} for t in herramientas]
         inicio = time.monotonic()
         try:
-            r = requests.post("https://api.anthropic.com/v1/messages", json=cuerpo, timeout=120, headers={
+            r = requests.post("https://api.anthropic.com/v1/messages", json=cuerpo, timeout=(10, 90), headers={
                 "x-api-key": clave, "anthropic-version": "2023-06-01", "content-type": "application/json"})
         except requests.Timeout:
             raise ErrorProveedor("tiempo", "Claude no respondió en 2 minutos", reintentable=True)

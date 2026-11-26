@@ -97,6 +97,10 @@ Estado real (auditoría del 24 de noviembre de 2026): verificado en el PC el cer
 - **Análisis exacto** de PDF, Word, Excel/CSV, imágenes y GLB (avanza la etapa 5).
 - **Voz en segundo plano** ("Luna" sin abrir nada, Vosk local), **pulso del Apple Watch** (solo local), **monitor del PC**, **notificaciones** y **autoevaluación** con banco de 30 casos (avanza la etapa 7).
 
+## LEK 2.0 (desde el 26/11/2026)
+El plan maestro LEK 2.0 se sigue por fases; el estado real de cada una está en `docs/ESTADO_CONTINUIDAD.md`.
+Fases 0 (auditoría) y 1 (estabilización y seguridad) completadas.
+
 ## Descartado por ahora
 - Ajuste fino temprano: cuesta mucho y la memoria más los documentos dan casi lo mismo.
 - Control total del PC sin permisos: va contra el nivel 3.

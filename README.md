@@ -18,6 +18,8 @@ Una asistente por voz tipo "Jarvis" que vive en tu PC. Le hablas desde el PC o e
 - **Proyectos:** le das un objetivo, propone el plan, tú lo apruebas y ella avanza cuando el PC está libre.
 - **Pulso del Apple Watch** (vía iPhone): [luna/ATAJO_APPLE_WATCH.md](luna/ATAJO_APPLE_WATCH.md). Solo en tu PC.
 - **Transparente:** cada cosa que hace sola (código, archivos, programas) aparece en Notificaciones, con el código completo.
+- **Segura:** sin PIN solo responde en tu PC; con PIN, el celular entra con una sesión de 30 días y 5 intentos fallidos lo bloquean. Las habilidades nuevas esperan tu aprobación y corren aisladas. Detalles en [docs/SEGURIDAD_LEK.md](docs/SEGURIDAD_LEK.md).
+- **Respaldos diarios verificados:** para volver a uno, cierra Luna y abre `restaurar.bat`.
 - **Collar de IA** opcional: un dije con micrófono y parlante ([collar/COLLAR.md](collar/COLLAR.md)).
 
 ---
