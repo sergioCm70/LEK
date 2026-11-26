@@ -27,7 +27,7 @@ import subprocess
 import sys
 
 MEMORIA_JOB = 512 * 1024 * 1024
-_estado = {"integridad_baja": None, "job": None, "detalle": "", "python": ""}
+_estado = {"integridad_baja": None, "job": None, "detalle": "", "python": "", "baja_desactivada": False}
 
 if os.name == "nt":
     from ctypes import wintypes as wt
@@ -113,6 +113,7 @@ def preparar_python_baja(carpeta: pathlib.Path) -> pathlib.Path | None:
         carpeta.mkdir(parents=True, exist_ok=True)
         firma = f"{base}|{base.stat().st_size}|{base.stat().st_mtime_ns}"
         if destino.exists() and marca.exists() and marca.read_text(encoding="utf-8") == firma:
+            escribir_pth(carpeta)
             return destino
         shutil.copy2(base, destino)
         for dll in base.parent.glob("*.dll"):          # python3XX.dll, python3.dll, vcruntime…
@@ -122,20 +123,34 @@ def preparar_python_baja(carpeta: pathlib.Path) -> pathlib.Path | None:
         if r.returncode != 0:
             raise OSError(r.stderr.decode("mbcs", "replace") or r.stdout.decode("mbcs", "replace"))
         marca.write_text(firma, encoding="utf-8")
+        escribir_pth(carpeta)
         return destino
     except Exception as e:
         _estado["detalle"] = f"Sin integridad baja: {e}"
         return None
 
 
+def escribir_pth(carpeta: pathlib.Path) -> None:
+    """python_baja._pth fija sys.path de la copia (la biblioteca de Python y las librerías de Luna).
+    Con -I Python ignora PYTHONHOME, así que esta es la forma de que la copia encuentre su biblioteca."""
+    import site
+    base = pathlib.Path(sys.base_prefix)
+    rutas = [base / "Lib", base / "DLLs", base] + [pathlib.Path(p) for p in site.getsitepackages()]
+    for z in base.glob("python*.zip"):
+        rutas.insert(0, z)
+    texto = "\n".join(str(r) for r in rutas if r.exists()) + "\n"
+    pth = pathlib.Path(carpeta) / "python_baja._pth"
+    if not pth.exists() or pth.read_text(encoding="utf-8") != texto:
+        pth.write_text(texto, encoding="utf-8")
+
+
 def lanzar(comando: list, opciones: dict, carpeta_exe: pathlib.Path):
     """Arranca el comando (comando[0] se reemplaza por el python adecuado) suspendido, lo mete en el Job y lo
     reanuda. Devuelve (proceso, job). Si algo falla en el Job, mata el proceso: nunca corre sin límites."""
-    exe = preparar_python_baja(carpeta_exe)
+    exe = None if _estado["baja_desactivada"] else preparar_python_baja(carpeta_exe)
     _estado["integridad_baja"] = exe is not None
     comando = [str(exe or python_base())] + list(comando[1:])
     env = dict(opciones.get("env") or {})
-    env["PYTHONHOME"] = sys.base_prefix                # la copia está fuera de su carpeta: le decimos dónde está Lib
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     opciones = {**opciones, "env": env,
                 "creationflags": opciones.get("creationflags", 0) | CREAR_SUSPENDIDO}
@@ -168,6 +183,19 @@ PRUEBAS = {
 
 
 def autoprueba(ejecutar_aislado, carpeta_prueba: pathlib.Path) -> dict:
+    """Comprueba en este PC qué barreras funcionan. Si con integridad baja ni siquiera corre el cálculo normal,
+    la desactiva (queda solo el Job Object) para no romper las habilidades, y lo informa."""
+    r = _autoprueba(ejecutar_aislado, carpeta_prueba)
+    if not r["pruebas"]["calcular normalmente"]["ok"] and _estado.get("integridad_baja"):
+        _estado["baja_desactivada"] = True
+        _estado["detalle"] = ("La copia con integridad baja no arrancó en este PC: uso solo el Job Object. "
+                              + r["pruebas"]["calcular normalmente"]["detalle"][:200])
+        r = _autoprueba(ejecutar_aislado, carpeta_prueba)
+        r["estado"] = estado()
+    return r
+
+
+def _autoprueba(ejecutar_aislado, carpeta_prueba: pathlib.Path) -> dict:
     """Ejecuta código de prueba (fijo, escrito aquí) y comprueba qué barreras funcionan en este PC."""
     carpeta_prueba.mkdir(parents=True, exist_ok=True)
     objetivo = carpeta_prueba / "no_debe_escribirse.txt"

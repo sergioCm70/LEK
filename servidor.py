@@ -1909,6 +1909,21 @@ def verificar_respaldo(a: ArchivoRespaldo, request: Request):
     return respaldo.verificar(ruta)
 
 
+def autoprueba_sandbox() -> dict:
+    from lek.automejora import aislamiento_windows
+    from lek.automejora.sandbox import ejecutar_aislado
+    try:
+        r = aislamiento_windows.autoprueba(ejecutar_aislado, DATOS / "sandbox" / "prueba")
+    except Exception as e:
+        NOTIF.notificar("error", "No pude probar el aislamiento de habilidades", str(e)[:300])
+        return {"todo_ok": False, "error": str(e)}
+    fallas = [k for k, v in r["pruebas"].items() if not v["ok"]]
+    print("  Aislamiento de habilidades:", "todo bloqueado como debe" if not fallas else "fallas en " + ", ".join(fallas))
+    if fallas:
+        NOTIF.notificar("seguridad", "El aislamiento de habilidades no está completo", ", ".join(fallas))
+    return r
+
+
 @app.post("/api/diagnostico/sandbox")
 def probar_sandbox(request: Request):
     """Comprueba en este PC qué barreras del sandbox funcionan de verdad (código de prueba fijo)."""
@@ -2234,6 +2249,8 @@ def main():
             print("  Inicio automático con Windows: activado")
     except Exception as e:
         print("  No pude configurar el inicio con Windows:", e)
+    if SISTEMA == "Windows":   # comprobar el aislamiento de habilidades antes de usarlas
+        threading.Thread(target=autoprueba_sandbox, daemon=True).start()
     voz_fondo = encender_despertador()
     if ABRIR_VENTANA:
         # Si ya escucha "Luna" en segundo plano, la ventana abre sin micrófono (si no, respondería dos veces).
