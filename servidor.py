@@ -126,6 +126,9 @@ PROYECTOS = GestorProyectos(ALMACEN, avisar=lambda t: NOTIF.notificar("proyecto"
 # Solo si Sergio pone LUNA_AUTOMEJORA_AUTONOMA=si en .env se activa sola la de riesgo bajo con pruebas superadas.
 AUTOMEJORA_AUTONOMA = os.getenv("LUNA_AUTOMEJORA_AUTONOMA", "no").strip().lower() in ("si", "sí", "1", "true")
 DESPERTADOR = None
+from lek.nucleo.actividad import Actividad
+from lek.nucleo.registro import Registro, ErrorValidacion
+ACTIVIDAD = Actividad()                           # qué está haciendo Luna, para la interfaz (/api/actividad)
 SEGUNDO_PLANO = os.getenv("LUNA_SEGUNDO_PLANO", "si").strip().lower() not in ("no", "0", "false")
 
 
@@ -160,8 +163,14 @@ def ahora() -> str:
 def ollama_chat(mensajes: list, usar_tools: bool = True, privado: bool = False, texto: str = "") -> dict:
     """Piensa con el cerebro que toque y devuelve un mensaje en formato común.
     Con `texto` (el pedido del usuario) el enrutador elige el modelo cuando el modo es "auto"."""
-    return CEREBRO.chat(mensajes, herramientas_actuales() if usar_tools else None, privado=privado,
-                        texto=texto).como_mensaje()
+    i = ACTIVIDAD.inicio("modelo", "Pensando")
+    try:
+        r = CEREBRO.chat(mensajes, herramientas_actuales() if usar_tools else None, privado=privado, texto=texto)
+    except Exception as e:
+        ACTIVIDAD.fin(i, ok=False, detalle=str(e)[:200])
+        raise
+    ACTIVIDAD.fin(i, detalle=f"{r.modelo} · {r.latencia:.1f} s" + (" · pidió herramientas" if r.llamadas else ""))
+    return r.como_mensaje()
 
 
 pensar = ollama_chat
@@ -335,13 +344,23 @@ def buscar_documentos(consulta: str) -> str:
 
 # ---------------------------------------------------------------- internet (DuckDuckGo, gratis)
 def buscar_internet(consulta: str) -> str:
+    resultados = resultados_de_busqueda(consulta)
+    if isinstance(resultados, str):
+        return resultados
+    if not resultados:
+        return "No encontré resultados."
+    return "\n\n".join(f"{t}\n{s}\n{u}".strip() for t, s, u in resultados)
+
+
+def resultados_de_busqueda(consulta: str, cuantos: int = 5):
+    """[(título, resumen, url)] de DuckDuckGo (gratis), o un texto de error."""
     resultados = []
     try:
         try:
             from ddgs import DDGS
         except ImportError:
             from duckduckgo_search import DDGS
-        for x in DDGS().text(consulta, region="es-es", max_results=5):
+        for x in DDGS().text(consulta, region="es-es", max_results=cuantos):
             resultados.append((x.get("title", ""), x.get("body", ""), x.get("href", "")))
     except Exception:
         try:
@@ -353,9 +372,7 @@ def buscar_internet(consulta: str) -> str:
                 resultados.append((re.sub("<.*?>", "", t), re.sub("<.*?>", "", s), ""))
         except Exception as e:
             return f"No pude buscar en internet: {e}"
-    if not resultados:
-        return "No encontré resultados."
-    return "\n\n".join(f"{t}\n{s}\n{u}".strip() for t, s, u in resultados)
+    return resultados
 
 
 # ---------------------------------------------------------------- acciones en el PC
@@ -767,6 +784,29 @@ _defs, _funcs = herramientas_luna(PROYECTOS, pensar_plan)
 HERRAMIENTAS += _defs
 FUNCIONES.update(_funcs)
 
+# --- agente investigador: varias búsquedas, lectura de páginas y síntesis con fuentes
+from lek.nucleo import investigador as _investigador
+
+
+def investigar(pregunta: str = "", **_) -> str:
+    def pensar_texto(prompt):
+        return ollama_chat([{"role": "user", "content": prompt}], usar_tools=False, texto=prompt).get("content", "")
+
+    def buscar(q):
+        r = resultados_de_busqueda(q, 6)
+        return [] if isinstance(r, str) else r
+
+    with ACTIVIDAD.paso("agente", "Agente investigador", pregunta[:80]):
+        return _investigador.investigar(pregunta, pensar_texto, buscar,
+                                        avisar=lambda paso: ACTIVIDAD.nota("agente", f"Investigador: {paso}"))
+
+
+HERRAMIENTAS.append(_f("investigar", "Investiga a fondo una pregunta compleja, comparativa o que necesita datos actuales de "
+                       "varias fuentes: divide en subtemas, busca, lee páginas y devuelve una síntesis con fuentes "
+                       "citadas, fechas y contradicciones. Para un dato simple usa buscar_internet.",
+                       {"pregunta": _txt}, ["pregunta"]))
+FUNCIONES["investigar"] = investigar
+
 # --- pendientes (memoria de trabajo que sobrevive a reinicios)
 from lek.pendientes import Pendientes, herramientas as herramientas_pendientes
 from lek import control_turno
@@ -836,6 +876,37 @@ FUNCIONES.update(analisis.crear_funciones(raices_analisis))
 HERRAMIENTAS_PRIVADAS.update(analisis.HERRAMIENTAS_PRIVADAS)
 
 
+# --- registro único de herramientas (LEK 2.0, fase 2): una ficha por herramienta con esquema y permisos
+NIVEL_2 = {"organizar_archivos", "deshacer_organizacion", "abrir_programa", "abrir_web", "crear_habilidad"}
+CATEGORIAS_HERRAMIENTAS = {
+    "memoria": {"recordar", "actualizar_recuerdo", "olvidar", "ver_memoria", "por_que_recuerdo", "buscar_conversaciones",
+                "guardar_nota", "leer_notas", "anotar_pendiente", "ver_pendientes", "cerrar_pendiente"},
+    "proyectos": {"trabajar_en", "crear_proyecto", "anotar_en_proyecto", "aprobar_propuesta", "ver_proyecto",
+                  "salir_de_proyecto", "crear_objetivo", "ver_proyectos"},
+    "archivos": {"analizar_archivos", "organizar_archivos", "deshacer_organizacion", "analizar_archivo",
+                 "comparar_archivos", "calcular_tabla", "buscar_documentos"},
+    "internet": {"buscar_internet", "abrir_web", "investigar"},
+    "sistema": {"abrir_programa", "estado_pc", "diagnostico", "mi_pulso"},
+    "autoevolucion": {"crear_habilidad", "proponer_mejora", "mis_habilidades", "leer_mi_manual", "leer_hoja_de_ruta",
+                      "anotar_avance_lek", "cambiar_mi_nombre", "corregir_oido", "aprender_palabra"},
+}
+
+
+def construir_registro() -> Registro:
+    r = Registro()
+    for d in HERRAMIENTAS:
+        n = d["function"]["name"]
+        if n not in FUNCIONES:
+            print(f"  OJO: la herramienta {n} no tiene función y no se registró")
+            continue
+        r.desde_definicion(d, FUNCIONES[n], privacidad=HERRAMIENTAS_PRIVADAS.get(n, ""),
+                           siempre_privada=n in HERRAMIENTAS_SIEMPRE_PRIVADAS,
+                           externa=n in control_turno.EXTERNAS, efectos=n in control_turno.CON_EFECTOS,
+                           nivel=2 if n in NIVEL_2 else (1 if n in control_turno.CON_EFECTOS else 0),
+                           categoria=next((c for c, ns in CATEGORIAS_HERRAMIENTAS.items() if n in ns), "general"))
+    return r
+
+
 def herramienta_es_privada(nombre: str) -> bool:
     if nombre in HERRAMIENTAS_SIEMPRE_PRIVADAS:      # salud: no depende de ningún ajuste
         return True
@@ -847,10 +918,13 @@ def herramienta_es_privada(nombre: str) -> bool:
     return False
 
 
+REGISTRO = construir_registro()
+
+
 def herramientas_actuales() -> list:
     extra = [_f(n, h["descripcion"], {k: {"type": "string", "description": str(v)} for k, v in h["parametros"].items()},
                 list(h["parametros"])) for n, h in cargar_habilidades().items()]
-    return HERRAMIENTAS + extra
+    return REGISTRO.definiciones() + extra
 
 
 def ejecutar_herramienta(nombre: str, argumentos, contaminado: bool = False) -> str:
@@ -867,8 +941,13 @@ def ejecutar_herramienta(nombre: str, argumentos, contaminado: bool = False) -> 
         NOTIF.notificar("seguridad", f"Bloqueé {nombre}",
                         "Se intentó después de leer datos externos (posible instrucción escondida). Si era tuyo, pídelo de nuevo.")
         return resultado
+    privada = herramienta_es_privada(nombre)
+    resumen = "" if privada or not isinstance(argumentos, dict) else \
+        ", ".join(f"{k}={str(v)[:40]}" for k, v in list(argumentos.items())[:3])
+    i = ACTIVIDAD.inicio("herramienta", f"Usando {nombre}", resumen)
     resultado = _ejecutar_herramienta(nombre, argumentos)
     falla = resultado.startswith(("Error en ", "La habilidad falló", "No existe la herramienta", "Argumentos incorrectos"))
+    ACTIVIDAD.fin(i, ok=not falla, detalle="" if privada else resultado[:120])
     _auditar_herramienta(nombre, argumentos, "error" if falla else "ok", inicio)
     if control_turno.es_externa(nombre, habilidades_con_red()):
         resultado = control_turno.marcar_externo(nombre, resultado)
@@ -902,6 +981,12 @@ def _auditar_herramienta(nombre: str, argumentos, resultado: str, inicio: float)
 
 
 def _ejecutar_herramienta(nombre: str, argumentos) -> str:
+    if nombre in REGISTRO:                              # validación contra el esquema de la ficha
+        try:
+            argumentos = REGISTRO.validar(nombre, argumentos)
+        except ErrorValidacion as e:
+            registrar_error(nombre)
+            return f"Argumentos incorrectos para {nombre}: {e}"
     funcion = FUNCIONES.get(nombre)
     if not funcion and nombre in cargar_habilidades():
         h = cargar_habilidades()[nombre]
@@ -1036,6 +1121,19 @@ def contexto_de_memoria(texto: str, proyecto: dict | None, con_memoria: bool) ->
 
 def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas: list | None = None,
               fondo: bool = False) -> str:
+    origen = "voz de fondo" if fondo else ("voz" if voz else ("celular u otro dispositivo" if cliente not in ("web", "voz") else "texto"))
+    i = ACTIVIDAD.inicio("turno", "Atendiendo un pedido", origen)   # nunca el texto del pedido
+    try:
+        r = _responder(texto, cliente, voz, alternativas, fondo)
+    except Exception as e:
+        ACTIVIDAD.fin(i, ok=False, detalle=f"{type(e).__name__}")
+        raise
+    ACTIVIDAD.fin(i)
+    return r
+
+
+def _responder(texto: str, cliente: str = "web", voz: bool = False, alternativas: list | None = None,
+               fondo: bool = False) -> str:
     """Un turno de conversación. Todo se guarda para siempre; lo privado nunca va a la nube.
     voz=True: el texto viene del reconocimiento de voz (se corrige con lo aprendido y se interpreta)."""
     nota_voz = ""
@@ -1141,7 +1239,10 @@ def indexar_en_segundo_plano() -> None:
         if not _indexando.acquire(blocking=False):
             return
         try:
-            MEMORIA.indexar_pendientes(limite=200)
+            if not MEMORIA.listo():
+                return
+            with ACTIVIDAD.paso("fondo", "Indexando la memoria por significado"):
+                MEMORIA.indexar_pendientes(limite=200)
         except Exception as e:
             print("  No pude indexar la memoria:", e)
         finally:
@@ -1176,6 +1277,11 @@ def resumir_dias_pendientes(maximo: int = 10) -> None:
 
 def respaldo_diario() -> dict:
     """Un respaldo completo verificado por día. Si falla la verificación, avisa."""
+    with ACTIVIDAD.paso("fondo", "Respaldo diario"):
+        return _respaldo_diario()
+
+
+def _respaldo_diario() -> dict:
     hoy = datetime.date.today().isoformat()
     ya = [z for z in respaldo.listar(BASE) if hoy in z.name and "antes-de" not in z.name]
     if ya:
@@ -1888,6 +1994,11 @@ def accion_tarea(tid: int, accion: str, request: Request):
 
 def ejecutar_tarea(tarea, punto):
     """Ejecutor de tareas en segundo plano: solo piensa y escribe texto (nivel 0/1). Nivel 2 lo hace el usuario."""
+    with ACTIVIDAD.paso("tarea", f"Tarea autónoma: {tarea.get('titulo', '')[:80]}"):
+        return _ejecutar_tarea(tarea, punto)
+
+
+def _ejecutar_tarea(tarea, punto):
     if tarea["nivel_autorizacion"] >= 2:
         return {"estado": "bloqueada", "motivo": "Esta acción la debes hacer tú; márcala como hecha al terminar."}
     previos = "\n".join(f"- {r[:1500]}" for r in tarea["resultados_previos"].values()) or "(ninguno)"
@@ -2051,6 +2162,26 @@ def autoprueba_sandbox() -> dict:
     if fallas:
         NOTIF.notificar("seguridad", "El aislamiento de habilidades no está completo", ", ".join(fallas))
     return r
+
+
+@app.get("/api/actividad")
+def ver_actividad(request: Request, desde: int = 0):
+    """Lo que Luna está haciendo ahora y lo último que hizo (sin textos privados)."""
+    revisar_pin(request)
+    return ACTIVIDAD.desde(max(0, desde))
+
+
+@app.get("/api/herramientas")
+def ver_herramientas(request: Request):
+    """Cada herramienta con su esquema, permisos y si es privada, externa o con efectos."""
+    revisar_pin(request)
+    fichas = REGISTRO.fichas()
+    for n, h in cargar_habilidades().items():
+        fichas.append({"nombre": n, "descripcion": h["descripcion"], "categoria": "habilidad aprobada",
+                       "entradas": {k: "string" for k in h["parametros"]}, "requeridos": list(h["parametros"]),
+                       "privacidad": "", "externa": n in habilidades_con_red(), "efectos": False, "nivel": 0,
+                       "nivel_nombre": "consulta (aislada en el sandbox)"})
+    return {"herramientas": fichas, "total": len(fichas)}
 
 
 @app.post("/api/diagnostico/sandbox")

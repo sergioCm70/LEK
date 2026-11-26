@@ -24,6 +24,9 @@ servidor.responder()
 | Módulo | Responsabilidad |
 |---|---|
 | `servidor.py` | FastAPI: endpoints, herramientas, prompt, arranque. Todavía es grande (fase 2: separar el núcleo). |
+| `lek/nucleo/registro.py` | Registro único de herramientas: esquema, validación, permisos, metadatos. |
+| `lek/nucleo/actividad.py` | Actividad en vivo para la interfaz (sin textos privados). |
+| `lek/nucleo/investigador.py` | Agente investigador con fuentes y protección SSRF. |
 | `lek/seguridad.py` | PIN cifrado, sesiones, bloqueos, validación de Host y Origin. |
 | `lek/control_turno.py` | Datos externos, bloqueo por contaminación, afirmaciones sin respaldo. |
 | `lek/pendientes.py` | Memoria de trabajo: pendientes que sobreviven a reinicios. |
@@ -51,7 +54,7 @@ servidor.responder()
 ## Pruebas
 
 ```
-python -m pytest -q      # 387 pruebas, sin red ni modelos reales (proveedores falsos)
+python -m pytest -q      # 397 pruebas, sin red ni modelos reales (proveedores falsos)
 ```
 
 En este entorno de desarrollo FastAPI no está instalado: `tests/conftest.py` lo reemplaza por un sustituto mínimo, así que las pruebas llaman a las funciones de los endpoints directamente. El comportamiento HTTP real (middleware y cookies) se verificó en el PC.

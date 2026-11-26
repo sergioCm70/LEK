@@ -434,6 +434,7 @@
     <button type="button" role="menuitem" id="verInt">Inteligencia <small>modelos y gasto</small></button>
     <button type="button" role="menuitem" id="verHab">Habilidades <small>aprobar y revisar</small></button>
     <button type="button" role="menuitem" id="verArchivos">Archivos <small>ordenar el PC</small></button>
+    <button type="button" role="menuitem" id="verActividad">Actividad <small>qué está haciendo Luna</small></button>
     <button type="button" role="menuitem" id="verMemoria">Memoria <small>recuerdos y proyectos</small></button>
     <button type="button" role="menuitem" id="verProyectos">Tareas autónomas <small>avance y permisos</small></button>
     <button type="button" role="menuitem" id="verPcMenu">Estado del PC <small>CPU, RAM, disco</small></button>
@@ -558,6 +559,13 @@
   <button class="cerrar" id="cerrarProyectos" aria-label="Cerrar">Cerrar</button>
   <h2 class="tit" id="proyTit">Proyectos</h2>
   <div id="proyLista"><div class="vacio">Cargando…</div></div>
+</div></div>
+
+<div id="actividad" class="cajon" role="dialog" aria-labelledby="actTit"><div class="caja">
+  <button class="cerrar" id="cerrarActividad" aria-label="Cerrar">Cerrar</button>
+  <h2 class="tit" id="actTit">Actividad</h2>
+  <div class="dato">Lo que Luna está haciendo ahora y lo último que hizo: cerebro usado, herramientas, agentes y tareas de fondo. Nunca muestra el texto de tus pedidos.</div>
+  <div id="actLista"><div class="vacio">Cargando…</div></div>
 </div></div>
 
 <div id="memoria" class="cajon" role="dialog" aria-labelledby="memTit"><div class="caja">
@@ -807,6 +815,7 @@ async function enviar(texto, opciones = {}) {
   if (opciones.voz) burbujaOrigen(texto, "🎙 dicho por ti"); else burbuja(texto, "u");
   estado("Pensando…", "pensando");
   const t0 = performance.now();
+  const vigia = setInterval(mostrarQueHace, 700);       // "Usando buscar_internet…", "Investigador: leyendo…"
   try {
     const d = await api("/api/chat", { texto, cliente, voz: !!opciones.voz, alternativas: opciones.alternativas || [] });
     if (d.ultimo_id) ultimoMensaje = Math.max(ultimoMensaje, d.ultimo_id);
@@ -819,10 +828,40 @@ async function enviar(texto, opciones = {}) {
     burbuja("No logro conectarme con el PC. ¿Está encendido el programa?", "j");
     sistema("Sin respuesta del PC", "aviso");
   } finally {
+    clearInterval(vigia);
     ocupado = false;
     if (continuo) escuchar(); else reposo();
   }
 }
+
+// ------------------------------------------------------------ actividad en vivo
+let ultimaActividad = 0;
+const TEXTO_TIPO = { turno: "Pedido", modelo: "Cerebro", herramienta: "Herramienta", agente: "Agente", fondo: "Segundo plano", tarea: "Tarea" };
+async function mostrarQueHace() {
+  try {
+    const d = await api("/api/actividad?desde=" + ultimaActividad);
+    const vivo = (d.en_curso || []).filter(e => e.tipo !== "turno").sort((a, b) => b.id - a.id)[0];
+    const nota = (d.eventos || []).filter(e => e.estado === "info").pop();
+    if (nota && (!vivo || nota.id > vivo.id)) estado(nota.titulo + "…", "pensando");
+    else if (vivo) estado((vivo.tipo === "modelo" ? "Pensando" : vivo.titulo) + "…", "pensando");
+  } catch (e) {}
+}
+async function cargarActividad() {
+  const c = $("actLista");
+  try {
+    const d = await api("/api/actividad?desde=0");
+    const filas = [];
+    for (const e of (d.en_curso || []).sort((a, b) => b.id - a.id))
+      filas.push(el("article", { class: "hab nueva" }, el("div", { class: "cab" }, el("b", { text: e.titulo }), chip("en curso", "aviso")),
+        el("div", { class: "meta", text: `${TEXTO_TIPO[e.tipo] || e.tipo} · ${e.segundos} s` + (e.detalle ? " · " + e.detalle : "") })));
+    for (const e of (d.eventos || []).filter(e => e.estado !== "inicio").reverse().slice(0, 60))
+      filas.push(el("article", { class: "hab" }, el("div", { class: "cab" }, el("b", { text: e.titulo }),
+          e.estado === "error" ? chip("error", "no") : (e.estado === "info" ? null : chip("listo", "ok"))),
+        el("div", { class: "meta", text: [fecha(e.fecha), TEXTO_TIPO[e.tipo] || e.tipo, e.ms != null ? (e.ms / 1000).toFixed(1) + " s" : "", e.detalle || ""].filter(Boolean).join(" · ") })));
+    c.replaceChildren(...(filas.length ? filas : [vacio("Todavía no hay actividad desde que arrancó Luna.")]));
+  } catch (e) { c.replaceChildren(vacio(noExiste(e) ? NO_ACTIVO : "No pude leer la actividad: " + motivo(e))); }
+}
+let actRefresco = null;
 
 $("nucleo").onclick = () => {
   if ("speechSynthesis" in window && speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
@@ -1211,7 +1250,7 @@ const humano = s => { s = String(s || "").replace(/_/g, " "); return s.charAt(0)
 const NO_ACTIVO = "Esta función todavía no está activa en el servidor de Luna. Cuando se actualice, aparecerá aquí.";
 
 // ------------------------------------------------------------ cajones: abrir, cerrar, foco y Escape
-const CAJONES = ["panel", "ajustes", "intel", "notif", "archivos", "proyectos", "pc", "pulsoCajon", "memoria"];
+const CAJONES = ["panel", "ajustes", "intel", "notif", "archivos", "proyectos", "pc", "pulsoCajon", "memoria", "actividad"];
 const abierto = id => id === "panel" ? $("panel").classList.contains("abierto") : $(id).style.display === "block";
 function cerrarCajon(id) { if (id === "panel") $("panel").classList.remove("abierto"); else $(id).style.display = "none"; }
 let origenFoco = null;
@@ -1229,6 +1268,8 @@ $("verArchivos").onclick = () => { abrirCajon("archivos"); cargarArchivos(); };
 $("cerrarArchivos").onclick = () => { $("archivos").style.display = "none"; clearTimeout(arcRefresco); };
 $("verProyectos").onclick = () => { abrirCajon("proyectos"); cargarProyectos(); };
 $("verMemoria").onclick = () => { abrirCajon("memoria"); cargarMemoria(); };
+$("verActividad").onclick = () => { abrirCajon("actividad"); cargarActividad(); clearInterval(actRefresco); actRefresco = setInterval(() => { if (abierto("actividad") && !document.hidden) cargarActividad(); }, 1500); };
+$("cerrarActividad").onclick = () => { $("actividad").style.display = "none"; clearInterval(actRefresco); };
 $("cerrarMemoria").onclick = () => $("memoria").style.display = "none";
 $("cerrarProyectos").onclick = () => $("proyectos").style.display = "none";
 $("campana").onclick = () => { abrirCajon("notif"); pintarNotif(); leerNotif(); };
@@ -1238,7 +1279,7 @@ $("verPc").onclick = $("verPcMenu").onclick = () => { abrirCajon("pc"); pintarPc
 $("cerrarPc").onclick = () => $("pc").style.display = "none";
 $("cerrarPulso").onclick = () => $("pulsoCajon").style.display = "none";
 [["verHab", "panel", "cerrarPanel"], ["verAjustes", "ajustes", "cerrarAjustes"], ["verInt", "intel", "cerrarInt"],
- ["verArchivos", "archivos", "cerrarArchivos"], ["verProyectos", "proyectos", "cerrarProyectos"], ["verMemoria", "memoria", "cerrarMemoria"],
+ ["verArchivos", "archivos", "cerrarArchivos"], ["verProyectos", "proyectos", "cerrarProyectos"], ["verMemoria", "memoria", "cerrarMemoria"], ["verActividad", "actividad", "cerrarActividad"],
  ["campana", "notif", "cerrarNotif"], ["verPulso", "pulsoCajon", "cerrarPulso"], ["verPc", "pc", "cerrarPc"], ["verPcMenu", "pc", "cerrarPc"]].forEach(a => enlazarCajon(...a));
 
 // menú "Módulos"

@@ -1,5 +1,13 @@
 # Registro de cambios
 
+## 2026-11-26 — LEK 2.0, fase 2 (núcleo)
+
+- **Registro único de herramientas** (`lek/nucleo/registro.py`): esquema, validación, privacidad, externa, efectos, nivel y categoría; endpoint `/api/herramientas`.
+- **Actividad en vivo** (`lek/nucleo/actividad.py`): turno, cerebro, herramientas, agentes y tareas de fondo; `/api/actividad`. En la interfaz, el estado muestra lo que está haciendo Luna ("Usando…", "Investigador: …") y hay un cajón Actividad nuevo.
+- **Agente investigador** (`investigar`): subtemas, búsqueda, lectura de páginas en paralelo y síntesis con fuentes; protección contra SSRF.
+- **Documentación:** `docs/AGENTES_LEK.md` y `docs/API_LEK.md` (generado desde el código, 59 rutas).
+- **Pruebas:** 387 → 397.
+
 ## 2026-11-26 — LEK 2.0, fase 3 (memoria por capas y proyectos contextuales)
 
 - **Recuerdos:** categoría, tipo de fuente, confianza, vigencia, reemplazos con historial y expiración de los temporales.

@@ -8,7 +8,7 @@
 |---|---|---|
 | 0 Auditoría | **Completada** | `docs/AUDITORIA_LEK2.md` |
 | 1 Estabilización | **Completada** | Críticos C1–C3 y altos A1–A7 resueltos. C4 (rotar la clave de Claude) depende de Sergio. Ver `REGISTRO_CAMBIOS.md` |
-| 2 Núcleo inteligente | Pendiente | Separar `servidor.py`: registro de herramientas con esquema, permisos y pruebas; orquestador con estados PENDIENTE…FALLIDO; agentes solo donde aporten (investigador, archivos, programación) |
+| 2 Núcleo inteligente | **Completada (base)** | Registro único de herramientas con esquema, validación y permisos (`lek/nucleo/registro.py`); actividad en vivo (`/api/actividad`, Módulos → Actividad); agente investigador con fuentes. Ver `AGENTES_LEK.md` y `API_LEK.md`. Pendiente: sacar los endpoints de `servidor.py` a módulos (refactor mecánico, sin cambio de comportamiento) |
 | 3 Memoria por capas | **Completada** | `docs/MEMORIA_LEK.md`. Recuerdos con procedencia y vigencia, contradicciones, olvido con índices, por qué, exportar/importar, proyectos contextuales. Falta: reranking (descartado por RAM) e interfaz para editar items de proyectos |
 | 4 Autonomía | Parcial | Proyectos, tareas y aprobaciones ya existen (`lek/autonomia`). Faltan los 5 niveles configurables, permisos por herramienta y carpeta, y el panel de actividad |
 | 5 Autoevolución | Parcial | Sandbox real y aprobación humana listos. Faltan versiones e historial por habilidad, reversión desde la interfaz y propuestas de mejora del núcleo en rama aparte |
@@ -46,6 +46,18 @@
 | Migración con respaldo previo verificado | **Aprobada en el PC real** |
 | "Trabajemos en Las Delicias" de punta a punta | **Aprobada en el PC real**: 127 s con el modelo local (y el proyecto no quedó activo por un error, ya corregido); 2,8 s con Claude después de que Sergio permitió `proyectos = nube` (26/11), con el proyecto activo y los mensajes asociados |
 
+## Criterios de aceptación de la fase 2
+
+| Prueba | Resultado |
+|---|---|
+| Cada herramienta tiene ficha completa (definición = función) | Aprobada (pruebas) |
+| Argumentos inválidos se rechazan antes de ejecutar | Aprobada (pruebas) |
+| La actividad muestra turno, cerebro y herramientas sin texto privado | Aprobada (pruebas) |
+| El investigador cita fuentes y no lee dos veces la misma página | Aprobada (pruebas) |
+| El investigador no puede leer la red local ni a Luna (SSRF) | Aprobada (pruebas) |
+| Lo investigado contamina el turno (sin acciones con efectos) | Aprobada (pruebas) |
+| En el PC: actividad, herramientas e investigación real | Ver más abajo |
+
 ## Pendientes de Sergio
 
 1. Poner un PIN en Ajustes → Seguridad (6 dígitos o más).
@@ -58,4 +70,4 @@
 
 ## Próximo paso recomendado
 
-Fase 2 (núcleo): separar `servidor.py` en módulos con un registro de herramientas (esquema, permisos, pruebas) y un orquestador con estados. Prepara las fases 4 (autonomía por niveles) y 6 (panel de actividad).
+Fase 4 (autonomía): 5 niveles configurables con permisos por herramienta, carpeta y proyecto (sobre el registro), estado VERIFICANDO en las tareas y verificación del objetivo.

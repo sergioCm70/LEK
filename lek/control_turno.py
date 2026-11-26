@@ -14,7 +14,7 @@ import re
 
 # Herramientas cuyo resultado trae contenido de terceros (internet, documentos, archivos del PC).
 EXTERNAS = {"buscar_internet", "buscar_documentos", "analizar_archivo", "comparar_archivos", "calcular_tabla",
-            "analizar_archivos"}
+            "analizar_archivos", "investigar"}
 
 # Herramientas que cambian algo fuera de la conversación.
 CON_EFECTOS = {"organizar_archivos", "deshacer_organizacion", "abrir_programa", "abrir_web", "crear_habilidad",
