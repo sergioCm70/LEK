@@ -321,6 +321,25 @@
     .recursos, .sistema, .rotulo { display:none; }
     #nucleo { width:min(220px, 60vw, 30vh); }
   }
+  /* ---------- celular conversando: el núcleo se hace pequeño y la conversación toma la pantalla.
+     Las lecturas y los recursos siguen en Módulos; tocar el estado devuelve el panel completo. */
+  @media (max-width: 700px) {
+    body { height:100dvh; }
+    body.conversando:not(.panel) .lecturas, body.conversando:not(.panel) .recursos,
+    body.conversando:not(.panel) .rotulo { display:none; }
+    body.conversando:not(.panel) .escena { display:flex; flex-direction:row; align-items:center; gap:12px; width:100%; padding:2px 16px 4px; }
+    body.conversando:not(.panel) .marco { padding:0; flex:none; }
+    body.conversando:not(.panel) .marco::before, body.conversando:not(.panel) .marco::after { display:none; }
+    body.conversando:not(.panel) #nucleo { width:68px; }
+    body.conversando:not(.panel) .escena > div:not(.marco) { text-align:left; }
+    body.conversando:not(.panel) #estado { text-align:left; margin:0; padding:0; font-size:.88rem; cursor:pointer; flex:1; }
+    body.conversando:not(.panel) #subtitulo { text-align:left; }
+    body.conversando:not(.panel) .escena { flex-wrap:wrap; }
+    body.conversando:not(.panel) #subtitulo:empty { display:none; }
+    .barra { flex-wrap:nowrap; overflow-x:auto; justify-content:flex-start; scrollbar-width:none; padding-bottom:2px; }
+    .barra::-webkit-scrollbar { display:none; }
+    .barra button, .barra label { flex:none; min-height:36px; }
+  }
   /* ---------- pantallas anchas: HUD a la izquierda, conversación a la derecha */
   @media (min-width: 960px) {
     main { grid-template-columns:minmax(400px, 1fr) minmax(0, 1.1fr); grid-template-rows:1fr; align-items:center; }
@@ -767,6 +786,17 @@ function decir(texto) {
     speechSynthesis.speak(u);
   });
 }
+
+// Celular: en cuanto hay conversación, el núcleo se compacta (CSS: body.conversando). Tocar el estado lo alterna.
+(() => {
+  const revisar = () => document.body.classList.toggle("conversando", !!$("chat").querySelector(".b.u, .b.j"));
+  new MutationObserver(revisar).observe($("chat"), { childList: true });
+  revisar();
+  $("estado").addEventListener("click", () => {
+    if (matchMedia("(max-width: 700px)").matches && document.body.classList.contains("conversando"))
+      document.body.classList.toggle("panel");
+  });
+})();
 
 // Voz por frases: mientras la respuesta llega en vivo, cada frase completa se dice en cuanto está lista.
 function hablante() {
