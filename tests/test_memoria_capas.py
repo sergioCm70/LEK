@@ -181,3 +181,25 @@ def test_endpoints_de_memoria(luna):
     assert luna.ver_recuerdos(pc)["recuerdos"] == []
     with pytest.raises(Exception):
         luna.olvidar_api(luna.RefRecuerdo(ref="1"), Peticion(host="192.168.1.9"))   # desde fuera sin PIN, no
+
+
+def test_trabajar_en_proyecto_nuevo_lo_deja_activo(luna):
+    r = luna.ejecutar_herramienta("trabajar_en", {"proyecto": "Las Delicias"})
+    assert "lo creé vacío y quedó activo" in r
+    assert luna.PROYECTOS_CTX.activo()["slug"] == "las-delicias"
+
+
+def test_privacidad_de_proyectos_configurable(luna):
+    luna.PROYECTOS_CTX.crear("Las Delicias")
+    luna.PROYECTOS_CTX.registrar("las-delicias", "decision", "Cuatro pisos")
+    luna.PROYECTOS_CTX.activar("las-delicias")
+    nube = luna.PROVEEDORES["claude"]
+    nube._configurado = True
+    nube.respuestas = ["Claro."]
+    luna.responder("dime algo útil para hoy")
+    assert "Cuatro pisos" not in str(nube.recibido)               # por defecto, solo en el PC
+    luna.CONFIG.cambiar("privacidad", "proyectos", "nube")
+    nube.respuestas = [llamada("trabajar_en", {"proyecto": "Las Delicias"}), "Retomemos."]
+    luna.responder("trabajemos en Las Delicias")
+    assert "Cuatro pisos" in str(nube.recibido[-1])              # Sergio lo permitió: sigue en Claude
+    assert luna.PROVEEDORES["ollama"].recibido == []

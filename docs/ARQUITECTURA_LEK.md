@@ -27,6 +27,8 @@ servidor.responder()
 | `lek/seguridad.py` | PIN cifrado, sesiones, bloqueos, validación de Host y Origin. |
 | `lek/control_turno.py` | Datos externos, bloqueo por contaminación, afirmaciones sin respaldo. |
 | `lek/pendientes.py` | Memoria de trabajo: pendientes que sobreviven a reinicios. |
+| `lek/memoria_capas.py` | Recuerdos con categoría, tipo de fuente, confianza, vigencia e historial (ver `MEMORIA_LEK.md`). |
+| `lek/proyectos_contexto.py` | Proyectos contextuales: decisiones vs propuestas, restricciones, fechas, avances, problemas. |
 | `lek/respaldo.py` | Respaldo zip verificable y restauración (CLI y `restaurar.bat`). |
 | `lek/inicio_windows.py` | Arranque con Windows (carpeta Inicio del usuario). |
 | `lek/cerebros/` | Proveedores (Ollama, Claude), catálogo, salud, gestor (presupuesto mensual y diario, avisos al 80 %) y enrutador. |
@@ -49,7 +51,7 @@ servidor.responder()
 ## Pruebas
 
 ```
-python -m pytest -q      # 369 pruebas, sin red ni modelos reales (proveedores falsos)
+python -m pytest -q      # 387 pruebas, sin red ni modelos reales (proveedores falsos)
 ```
 
 En este entorno de desarrollo FastAPI no está instalado: `tests/conftest.py` lo reemplaza por un sustituto mínimo, así que las pruebas llaman a las funciones de los endpoints directamente. El comportamiento HTTP real (middleware y cookies) se verificó en el PC.

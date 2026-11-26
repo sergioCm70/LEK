@@ -1,5 +1,17 @@
 # Registro de cambios
 
+## 2026-11-26 — LEK 2.0, fase 3 (memoria por capas y proyectos contextuales)
+
+- **Recuerdos:** categoría, tipo de fuente, confianza, vigencia, reemplazos con historial y expiración de los temporales.
+- **Comandos de memoria:** `actualizar_recuerdo`, `por_que_recuerdo`, y `olvidar`, que ahora también limpia el índice de vectores.
+- **Proyectos contextuales:** `trabajar_en`, `crear_proyecto`, `anotar_en_proyecto`, `aprobar_propuesta`, `ver_proyecto` y `salir_de_proyecto`; mensajes asociados al proyecto y detección cuando se nombra uno.
+- **Contexto de cada turno:** el proyecto activo (con lo confirmado separado de lo propuesto) y los recuerdos relacionados.
+- **Privacidad:** nueva clase `proyectos`, solo local por defecto.
+- **Interfaz y API:** cajón Memoria (proyectos, recuerdos, ¿por qué?, olvidar, exportar); endpoints `/api/memoria/*` y `/api/contexto/*`.
+- **Migración:** solo agrega columnas, con un respaldo verificado antes. Se ejecutó en el PC.
+- **Error encontrado en el PC y corregido:** al crear un proyecto nuevo con `trabajar_en`, no quedaba activo.
+- **Pruebas:** 369 → 387.
+
 ## 2026-11-26 — LEK 2.0, fases 0 y 1 (auditoría y estabilización)
 
 **Por qué:** la auditoría (`docs/AUDITORIA_LEK2.md`) encontró 4 problemas críticos y 7 altos.

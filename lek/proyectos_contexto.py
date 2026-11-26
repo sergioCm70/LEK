@@ -230,6 +230,7 @@ def herramientas(pc: ProyectosContexto, buscar_conversaciones=None):
         p = pc.buscar(proyecto)
         if not p:
             p = pc.crear(proyecto)
+            pc.activar(p["slug"])
             texto = f"No existía el proyecto {p['nombre']}: lo creé vacío y quedó activo."
             if buscar_conversaciones:
                 previas = buscar_conversaciones(proyecto)

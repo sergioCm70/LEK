@@ -809,7 +809,7 @@ FUNCIONES.update(_funcs)
 
 # Herramientas que devuelven información de una clase con regla de privacidad propia
 HERRAMIENTAS_PRIVADAS = {"ver_memoria": "memoria", "leer_notas": "notas", "buscar_documentos": "documentos",
-                         "por_que_recuerdo": "memoria", "trabajar_en": "memoria", "ver_proyecto": "memoria",
+                         "por_que_recuerdo": "memoria", "trabajar_en": "proyectos", "ver_proyecto": "proyectos",
                          "ver_pendientes": "memoria"}
 
 
@@ -1014,7 +1014,7 @@ def contexto_de_memoria(texto: str, proyecto: dict | None, con_memoria: bool) ->
     partes = []
     try:
         if proyecto:
-            if con_memoria:
+            if con_memoria or CONFIG.get("privacidad", "proyectos") == "nube":
                 partes.append("Proyecto activo (lo confirmado y lo propuesto están separados; no los mezcles):\n"
                               + PROYECTOS_CTX.resumen(proyecto["slug"], corto=True))
             else:

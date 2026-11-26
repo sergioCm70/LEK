@@ -22,6 +22,7 @@ POR_DEFECTO = {
         "notas": "local",
         "documentos": "local",
         "conversacion": "nube",
+        "proyectos": "local",                 # contexto de proyectos (decisiones, propuestas, restricciones)
     },
     "salud": {
         "fallos_para_pausar": 3,
@@ -40,6 +41,7 @@ OPCIONES = {
     ("privacidad", "notas"): ("local", "nube"),
     ("privacidad", "documentos"): ("local", "nube"),
     ("privacidad", "conversacion"): ("local", "nube"),
+    ("privacidad", "proyectos"): ("local", "nube"),
 }
 
 

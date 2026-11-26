@@ -9,7 +9,7 @@
 | 0 Auditoría | **Completada** | `docs/AUDITORIA_LEK2.md` |
 | 1 Estabilización | **Completada** | Críticos C1–C3 y altos A1–A7 resueltos. C4 (rotar la clave de Claude) depende de Sergio. Ver `REGISTRO_CAMBIOS.md` |
 | 2 Núcleo inteligente | Pendiente | Separar `servidor.py`: registro de herramientas con esquema, permisos y pruebas; orquestador con estados PENDIENTE…FALLIDO; agentes solo donde aporten (investigador, archivos, programación) |
-| 3 Memoria por capas | Pendiente | Recuerdos con fuente, fecha, confianza, vigencia y categoría; contradicciones; proyectos contextuales ("trabajemos en Las Delicias"); olvido que también limpie los vectores; exportar e importar |
+| 3 Memoria por capas | **Completada** | `docs/MEMORIA_LEK.md`. Recuerdos con procedencia y vigencia, contradicciones, olvido con índices, por qué, exportar/importar, proyectos contextuales. Falta: reranking (descartado por RAM) e interfaz para editar items de proyectos |
 | 4 Autonomía | Parcial | Proyectos, tareas y aprobaciones ya existen (`lek/autonomia`). Faltan los 5 niveles configurables, permisos por herramienta y carpeta, y el panel de actividad |
 | 5 Autoevolución | Parcial | Sandbox real y aprobación humana listos. Faltan versiones e historial por habilidad, reversión desde la interfaz y propuestas de mejora del núcleo en rama aparte |
 | 6 Interfaz y voz | Parcial | HUD, subtítulos y escucha de fondo listos. Faltan streaming de respuestas, interrupción, estados "buscando/ejecutando/esperando aprobación" y diseño propio para celular |
@@ -34,6 +34,18 @@
 | Arranque con Windows | **Acceso creado en el PC**; falta comprobarlo tras un reinicio real |
 | Acceso desde el celular con PIN y sesión | Pendiente: Sergio debe poner un PIN y probar |
 
+## Criterios de aceptación de la fase 3
+
+| Prueba | Resultado |
+|---|---|
+| Recupera recuerdos por lenguaje natural | Aprobada (pruebas) |
+| Distingue información actual de la antigua (reemplazos con historial) | Aprobada (pruebas) |
+| Lo inferido no se presenta como hecho | Aprobada (pruebas) |
+| Olvidar invalida y limpia el índice | Aprobada (pruebas) |
+| Conserva el contexto de proyectos (decisiones vs propuestas) | Aprobada (pruebas) |
+| Migración con respaldo previo verificado | **Aprobada en el PC real** |
+| "Trabajemos en Las Delicias" de punta a punta | **Funcionó en el PC** (127 s con el modelo local; el proyecto no quedó activo por un error que ya está corregido) |
+
 ## Pendientes de Sergio
 
 1. Poner un PIN en Ajustes → Seguridad (6 dígitos o más).
@@ -42,6 +54,8 @@
 4. Confirmar si tiene iPhone (necesario para el Apple Watch).
 5. Opcional: `ollama pull nomic-embed-text` para la memoria por significado (unos 274 MB, usa RAM).
 
+6. Decidir si el contexto de proyectos puede ir a Claude (Inteligencia → Privacidad → Proyectos). Solo local: más de 2 minutos por respuesta con la RAM llena.
+
 ## Próximo paso recomendado
 
-Fase 3 (memoria por capas y proyectos contextuales). Es lo que más cambia el uso diario: retomar Las Delicias con sus decisiones confirmadas, separadas de las propuestas.
+Fase 2 (núcleo): separar `servidor.py` en módulos con un registro de herramientas (esquema, permisos, pruebas) y un orquestador con estados. Prepara las fases 4 (autonomía por niveles) y 6 (panel de actividad).
