@@ -10,8 +10,9 @@
 - **Voz por frases:** en la ventana, Luna empieza a hablar en cuanto termina la primera frase, sin esperar la respuesta completa. Si la detienes, deja de hablar.
 - **Celular:** en pantallas de hasta 700 px, en cuanto hay conversación, el núcleo se compacta arriba y la conversación ocupa la pantalla. Las lecturas y los recursos siguen en Módulos; tocar el estado muestra el panel completo. Botones en una sola fila deslizable y altura real de pantalla (`100dvh`). Revisado con capturas a 390×844.
 - **Reglas por herramienta en la interfaz (fase 4):** Ajustes → Autonomía → Reglas por herramienta. Cada acción, agrupada por categoría, se puede dejar según el nivel, permitir siempre, preguntar siempre o bloquear. Usa el mismo `/api/autonomia`, que ya auditaba y notificaba los cambios.
+- **Versiones de habilidades (fase 5):** en Habilidades, cada habilidad activa muestra sus versiones anteriores (fecha, riesgo según la política, líneas distintas y código) y permite **volver a una**. La versión actual queda guardada antes, así que volver atrás también se puede deshacer. Nunca se borra una versión. Queda auditado y notificado.
 - **Herramienta de desarrollo:** `scripts/generar_api_doc.py` regenera `docs/API_LEK.md` (65 rutas).
-- **Pruebas:** 407 → 421.
+- **Pruebas:** 407 → 425.
 
 ## 2026-11-26 — LEK 2.0, fase 7 (multimodal, base)
 

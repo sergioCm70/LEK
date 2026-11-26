@@ -108,6 +108,7 @@ from lek.salud_corporal import SaludCorporal, ErrorPulso, HERRAMIENTA_MI_PULSO, 
 from lek.pc.organizador import Organizador, cargar_config as config_organizador, HERRAMIENTAS as HERRAMIENTAS_ARCHIVOS
 from lek.automejora import decidir, ejecutar_habilidad_aprobada
 from lek.automejora.politica import analizar as analizar_codigo
+from lek.automejora import versiones as versiones_hab
 from lek.autonomia.proyectos import GestorProyectos, TransicionInvalida, herramientas_luna
 from lek.autonomia.programador import Programador
 from lek.cerebros.enrutador import elegir
@@ -529,8 +530,7 @@ def crear_habilidad(nombre: str, codigo: str, descripcion: str = "") -> str:
     destino = (HABILIDADES if sola else PROPUESTAS) / f"{n}.py"
     destino.parent.mkdir(parents=True, exist_ok=True)
     if sola and destino.exists():
-        VERSIONES.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(destino, VERSIONES / f"{n}_{datetime.datetime.now():%Y%m%d_%H%M%S}.py")
+        versiones_hab.guardar_copia(VERSIONES, destino)
     estado = "activada sola" if sola else "esperando aprobación"
     cabecera = f"# Habilidad creada por {mi_nombre()} el {datetime.date.today().isoformat()} ({estado})\n"
     destino.write_text(cabecera + codigo.strip() + "\n", encoding="utf-8")
@@ -1731,6 +1731,8 @@ def revisar_aprobacion(request: Request) -> None:
 def ver_habilidades(request: Request):
     revisar_pin(request)
     activas = [leer_info_habilidad(HABILIDADES / h["archivo"]) for h in cargar_habilidades().values()]
+    for a in activas:
+        a["versiones"] = len(versiones_hab.listar(HABILIDADES, VERSIONES, a["nombre"]))
     propuestas = [leer_info_habilidad(p) for p in sorted(PROPUESTAS.glob("*.py"))] if PROPUESTAS.exists() else []
     ideas = IDEAS.read_text(encoding="utf-8") if IDEAS.exists() else ""
     return {"activas": activas, "propuestas": propuestas, "ideas": ideas}
@@ -1744,11 +1746,45 @@ def aprobar_habilidad(h: Nombre, request: Request):
         raise HTTPException(404, "No existe esa propuesta")
     destino = HABILIDADES / origen.name
     if destino.exists():  # conservar la versión anterior para poder revertir
-        VERSIONES.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(destino), str(VERSIONES / f"{origen.stem}_{datetime.datetime.now():%Y%m%d_%H%M%S}.py"))
+        versiones_hab.guardar_copia(VERSIONES, destino)
     shutil.move(str(origen), str(destino))
+    ALMACEN.auditar("habilidad", {"accion": "aprobar", "nombre": origen.stem})
     cargada = ("hab_" + origen.stem) in cargar_habilidades()
     return {"ok": cargada, "mensaje": "Activada" if cargada else "Tiene un error: mira la ventana negra"}
+
+
+@app.get("/api/habilidades/{nombre}/versiones")
+def ver_versiones_habilidad(nombre: str, request: Request):
+    """Versiones anteriores de una habilidad (con su código y su riesgo según la política)."""
+    revisar_pin(request)
+    lista = versiones_hab.listar(HABILIDADES, VERSIONES, slug(nombre))
+    for v in lista:
+        try:
+            v["riesgo"] = analizar_codigo(v["codigo"])["riesgo"]
+        except Exception:
+            v["riesgo"] = "alto"
+    return {"nombre": slug(nombre), "versiones": lista}
+
+
+class Restaurar(BaseModel):
+    nombre: str
+    archivo: str
+
+
+@app.post("/api/habilidades/restaurar")
+def restaurar_habilidad(r: Restaurar, request: Request):
+    """Vuelve a una versión anterior. Lo decide Sergio (como aprobar); la actual queda en el historial."""
+    revisar_aprobacion(request)
+    n = slug(r.nombre)
+    try:
+        d = versiones_hab.restaurar(HABILIDADES, VERSIONES, n, r.archivo)
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(400, str(e))
+    cargada = ("hab_" + n) in cargar_habilidades()
+    ALMACEN.auditar("habilidad", {"accion": "restaurar", "nombre": n, **d, "cargada": cargada})
+    NOTIF.notificar("mejora", f"Volví a una versión anterior de '{n}'",
+                    f"Versión {d['restaurada']}. La que estaba quedó guardada" + (f" como {d['copia_de_la_anterior']}." if d["copia_de_la_anterior"] else "."))
+    return {"ok": cargada, **d, "mensaje": "Restaurada" if cargada else "Restaurada, pero tiene un error al cargar: mira la ventana negra"}
 
 
 @app.post("/api/habilidades/rechazar")

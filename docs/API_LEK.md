@@ -22,6 +22,8 @@ aceptan peticiones solo del mismo origen (o de clientes sin `Origin`, como Atajo
 | POST | `/api/reiniciar` | `reiniciar` | Empieza un tema nuevo: el contexto corto se limpia, pero nada se borra (lo busca si hace falta). |
 | GET | `/api/habilidades` | `ver_habilidades` |  |
 | POST | `/api/habilidades/aprobar` | `aprobar_habilidad` |  |
+| GET | `/api/habilidades/{nombre}/versiones` | `ver_versiones_habilidad` | Versiones anteriores de una habilidad (con su código y su riesgo según la política). |
+| POST | `/api/habilidades/restaurar` | `restaurar_habilidad` | Vuelve a una versión anterior. Lo decide Sergio (como aprobar); la actual queda en el historial. |
 | POST | `/api/habilidades/rechazar` | `rechazar_habilidad` |  |
 | POST | `/api/habilidades/desactivar` | `desactivar_habilidad` |  |
 | GET | `/api/ajustes` | `ver_ajustes` |  |
@@ -72,4 +74,4 @@ aceptan peticiones solo del mismo origen (o de clientes sin `Origin`, como Atajo
 | POST | `/api/inteligencia/evaluar` | `evaluar_modelos` | Banco de 30 preguntas verificables (escalas, fechas, áreas, herramientas...) a cada modelo. |
 | GET | `/api/inteligencia/evaluar` | `ver_evaluacion` |  |
 
-Total: 65 rutas.
+Total: 67 rutas.

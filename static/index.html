@@ -1083,6 +1083,31 @@ function tarjeta(h, tipo) {
   if (tipo === "propuesta") { boton("Aprobar", "ok", "/api/habilidades/aprobar"); boton("Rechazar", "no", "/api/habilidades/rechazar"); }
   else boton(h.activada_sola ? "Desactivar (se activó sola)" : "Desactivar", h.activada_sola ? "no" : "neutro", "/api/habilidades/desactivar");
   d.appendChild(b);
+  if (tipo !== "propuesta" && h.versiones) {
+    const caja = el("div", { class: "versiones" });
+    const ver = el("button", { class: "neutro", text: `Versiones anteriores (${h.versiones})` });
+    ver.onclick = async () => {
+      if (caja.childElementCount) { caja.replaceChildren(); return; }
+      try {
+        const r = await api(`/api/habilidades/${encodeURIComponent(h.nombre)}/versiones`);
+        caja.replaceChildren(...r.versiones.map(v => {
+          const volver = el("button", { class: "ok", text: "Volver a esta versión", disabled: v.igual_a_la_actual });
+          volver.onclick = async () => {
+            if (!confirm(`¿Volver a la versión del ${v.fecha.replace("T", " ")}? La actual queda guardada en el historial.`)) return;
+            try { const x = await api("/api/habilidades/restaurar", { nombre: h.nombre, archivo: v.archivo }); alert(x.mensaje); }
+            catch (e) { alert("No se pudo: " + motivo(e)); }
+            cargarPanel();
+          };
+          return el("article", { class: "hab" },
+            el("div", { class: "cab" }, el("b", { text: v.fecha.replace("T", " ") }), chip("riesgo " + v.riesgo, v.riesgo === "bajo" ? "sano" : v.riesgo === "medio" ? "degradado" : "pausado")),
+            el("div", { class: "meta", text: v.igual_a_la_actual ? "Igual a la actual" : `${v.cambios_vs_actual} línea(s) distintas de la actual · ${v.lineas} líneas` }),
+            el("details", {}, el("summary", { text: "Ver código" }), el("pre", { class: "completo", text: v.codigo })),
+            el("div", { class: "botones" }, volver));
+        }));
+      } catch (e) { caja.replaceChildren(el("div", { text: "No pude leer las versiones: " + motivo(e) })); }
+    };
+    b.appendChild(ver); d.appendChild(caja);
+  }
   return d;
 }
 async function cargarPanel() {
