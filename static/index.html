@@ -495,6 +495,14 @@
     <div class="botones"><button class="ok" id="guardarPin">Guardar PIN</button><button class="no" id="cerrarSesiones">Cerrar sesión en todos los dispositivos</button></div>
     <div class="dato" style="margin-top:8px">Sin PIN, Luna solo responde en este PC. Con PIN, el celular (misma Wi-Fi o Tailscale) entra una vez y queda con una sesión de 30 días. Cinco PIN incorrectos bloquean ese dispositivo.</div>
   </div>
+  <h2 class="tit">Sistema</h2>
+  <div class="hab">
+    <label class="fila"><input type="checkbox" id="inicioWindows"> Arrancar Luna al prender el PC</label>
+    <div class="dato" id="estadoRespaldos">Cargando respaldos…</div>
+    <div class="botones"><button class="ok" id="crearRespaldo">Crear respaldo</button><button id="probarSandbox">Diagnóstico del sandbox</button></div>
+    <div class="dato" id="resultadoSistema" style="margin-top:8px"></div>
+    <div class="dato" style="margin-top:8px">Luna hace un respaldo verificado cada día y guarda 14 días. Para restaurar uno, cierra a Luna y abre restaurar.bat.</div>
+  </div>
 </div></div>
 
 <div id="intel" class="cajon" role="dialog" aria-label="Inteligencia"><div class="caja">
@@ -993,6 +1001,42 @@ $("cerrarSesiones").onclick = async () => {
   try { const r = await api("/api/seguridad/cerrar_sesiones", {}); sistema(`Sesiones cerradas: ${r.cerradas}`); cargarSeguridad(); }
   catch (e) { alert("No se pudo: " + motivo(e)); }
 };
+async function cargarSistema() {
+  try {
+    const s = await api("/api/sistema");
+    $("inicioWindows").checked = !!s.iniciar_con_windows;
+    const r = await api("/api/respaldos");
+    const ult = r.respaldos[0];
+    $("estadoRespaldos").textContent = r.respaldos.length
+      ? `${r.respaldos.length} respaldo(s). Último: ${ult.fecha.replace("T", " ")} (${ult.megas} MB).`
+      : "Todavía no hay respaldos.";
+  } catch (e) { $("estadoRespaldos").textContent = noExiste(e) ? NO_ACTIVO : "No pude leer el estado del sistema."; }
+}
+$("inicioWindows").onchange = async (ev) => {
+  try {
+    const r = await api("/api/sistema", { iniciar_con_windows: ev.target.checked });
+    sistema(r.iniciar_con_windows ? "Luna arrancará al prender el PC" : "Luna ya no arrancará sola");
+  } catch (e) { ev.target.checked = !ev.target.checked; alert("No se pudo: " + motivo(e)); }
+};
+$("crearRespaldo").onclick = async () => {
+  $("resultadoSistema").textContent = "Creando y verificando el respaldo…";
+  try {
+    const v = await api("/api/respaldos/crear", {});
+    $("resultadoSistema").textContent = v.ok ? `Respaldo creado y verificado: ${v.archivo || ""}`
+      : "El respaldo se creó pero no pasó la verificación: " + (v.problemas || []).slice(0, 3).join("; ");
+    cargarSistema();
+  } catch (e) { $("resultadoSistema").textContent = "No se pudo: " + motivo(e); }
+};
+$("probarSandbox").onclick = async () => {
+  $("resultadoSistema").textContent = "Probando las barreras del sandbox…";
+  try {
+    const r = await api("/api/diagnostico/sandbox", {});
+    if (r.disponible === false) { $("resultadoSistema").textContent = r.detalle; return; }
+    const p = Object.entries(r.pruebas || {});
+    $("resultadoSistema").textContent = (r.todo_ok ? "Todas las barreras funcionan: " : "Atención, hay barreras que fallan: ")
+      + p.map(([k, v]) => `${k} ${v.ok ? "✓" : "✗"}`).join(", ");
+  } catch (e) { $("resultadoSistema").textContent = "No se pudo: " + motivo(e); }
+};
 async function guardarCerebro(cuerpo) {
   $("estadoCerebro").textContent = "Probando…";
   try { await api("/api/ajustes", cuerpo); $("claveClaude").value = ""; }
@@ -1025,7 +1069,7 @@ $("verAjustes").onclick = () => {
   $("ajustes").style.display = "block";
   $("velVoz").value = leer("vel") || "1.05"; $("tonoVoz").value = leer("tono") || "1.05"; mostrarRangos();
   if ("speechSynthesis" in window) llenarVoces();
-  cargarAjustes(); cargarVozFondo(); cargarSeguridad(); cargarAutonomia();
+  cargarAjustes(); cargarVozFondo(); cargarSeguridad(); cargarAutonomia(); cargarSistema();
 };
 async function cargarVozFondo() {
   const c = $("vozFondo"), { codigo, datos: v } = await consultar("/api/voz");

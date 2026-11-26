@@ -6,7 +6,8 @@
 - **IFC (BIM exportado desde Revit):** proyecto, niveles con su cota, cantidad de muros, losas, puertas, ventanas, columnas, etc., y espacios con su área cuando el IFC trae cantidades base. Solo lectura. Si el archivo no trae áreas, lo dice y explica cómo exportarlas.
 - **OCR sin internet:** herramienta nueva `leer_texto_imagen`, que usa el OCR que trae Windows (Windows.Media.Ocr). Su resultado es privado (clase documentos) y externo (no puede disparar acciones en el mismo turno).
 - **Sin librerías nuevas:** todo funciona con la biblioteca estándar de Python y PowerShell.
-- **Documentación:** `docs/INTEGRACION_REVIT.md` (opciones para leer Revit sin modificarlo).
+- **Ajustes → Sistema (nuevo):** arranque con Windows, estado de respaldos, **Crear respaldo** (verificado) y **Diagnóstico del sandbox**. Los endpoints ya existían; faltaban los botones.
+- **Documentación:** `docs/INTEGRACION_REVIT.md` (opciones para leer Revit sin modificarlo) y `docs/INSTALACION.md`.
 - **Pruebas:** 403 → 407.
 
 ## 2026-11-26 — LEK 2.0, fase 4 (autonomía por niveles)
