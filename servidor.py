@@ -216,23 +216,13 @@ def cambiar_mi_nombre(nombre: str, por_que: str = "") -> str:
 
 # ---------------------------------------------------------------- memoria
 def cargar_memoria() -> list:
-    return ALMACEN.recuerdos()
+    try:
+        return MEMORIA_CAPAS.vigentes()
+    except Exception:                       # antes de migrar
+        return ALMACEN.recuerdos()
 
 
-def recordar(dato: str) -> str:
-    dato = (dato or "").strip()
-    if not dato:
-        return "No había nada que recordar."
-    return "Guardado en mi memoria." if ALMACEN.recordar(dato[:500]) else "Eso ya lo tenía guardado."
-
-
-def olvidar(texto: str) -> str:
-    """Nunca destruye: archiva. Se puede recuperar desde la base de datos."""
-    n = ALMACEN.archivar_recuerdos(texto)
-    ALMACEN.auditar("olvidar", texto)
-    if not n:
-        return "No encontré nada parecido en mi memoria."
-    return f"Dejé de usar {n} recuerdo(s). No los borré: quedan archivados por si los quieres de vuelta."
+# recordar, actualizar_recuerdo, olvidar, ver_memoria y por_que_recuerdo viven en lek/memoria_capas.py
 
 
 # ---------------------------------------------------------------- notas
@@ -663,11 +653,6 @@ def diagnostico() -> str:
     return ". ".join(partes) + "."
 
 
-def ver_memoria() -> str:
-    datos = cargar_memoria()
-    return "\n".join(f"- {d['dato']} ({d['fecha']})" for d in datos) or "No tengo recuerdos guardados."
-
-
 _privado_dinamico = threading.local()
 
 
@@ -707,10 +692,6 @@ HERRAMIENTAS = [
        {"consulta": _txt}, ["consulta"]),
     _f("buscar_documentos", "Busca en los documentos del usuario (carpeta conocimiento: apuntes, PDF, Word de la U).",
        {"consulta": _txt}, ["consulta"]),
-    _f("recordar", "Guarda en tu memoria permanente un dato importante del usuario cuando él te lo pida o sea claramente útil a futuro.",
-       {"dato": _txt}, ["dato"]),
-    _f("olvidar", "SOLO si el usuario lo pide explícitamente: deja de usar los recuerdos que contengan ese texto "
-                  "(no se borran, se archivan).", {"texto": _txt}, ["texto"]),
     _f("buscar_conversaciones", "Busca en TODAS las conversaciones pasadas con el usuario (se guardan para siempre). "
        "Por tema con 'consulta', o un día completo con 'fecha' en formato AAAA-MM-DD.",
        {"consulta": _txt, "fecha": _txt}),
@@ -722,9 +703,8 @@ HERRAMIENTAS = [
     _f("cambiar_mi_nombre", "Cambia tu propio nombre, solo si el usuario te lo pide.",
        {"nombre": _txt, "por_que": _txt}, ["nombre"]),
     _f("crear_habilidad",
-       "Escribe una habilidad NUEVA para ti misma en Python cuando te falte una capacidad. Si es de bajo riesgo "
-       "y sus ejemplos pasan, se activa sola (el usuario recibe el código en una notificación); si no, espera su "
-       "aprobación. 'codigo' es un archivo Python completo con: "
+       "Escribe una habilidad NUEVA para ti misma en Python cuando te falte una capacidad. Se prueba aislada y "
+       "queda esperando que Sergio la apruebe (él ve el código completo). 'codigo' es un archivo Python completo con: "
        "DESCRIPCION = \"qué hace\"; PARAMETROS = {\"param\": \"qué es\"} (todos texto); "
        "def ejecutar(param): ... return \"resultado en texto\"; y OBLIGATORIO "
        "EJEMPLOS = [{\"args\": {\"param\": \"valor\"}, \"espera_contiene\": \"texto\"}] (literales, mejor sin internet). "
@@ -743,16 +723,15 @@ HERRAMIENTAS = [
     _f("anotar_avance_lek", "Anota en la bitácora de LEK un avance YA verificado.",
        {"avance": _txt, "verificacion": _txt}, ["avance", "verificacion"]),
     _f("diagnostico", "Autodiagnóstico real: recursos del PC, velocidad, fallos, habilidades, propuestas."),
-    _f("ver_memoria", "Muestra todo lo que recuerdas del usuario (él puede corregirlo o pedir que lo olvides)."),
     _f("mis_habilidades", "Lista tus habilidades activas y las que esperan aprobación."),
 ]
 FUNCIONES = {
     "buscar_internet": buscar_internet, "buscar_documentos": buscar_documentos,
-    "recordar": recordar, "olvidar": olvidar, "guardar_nota": guardar_nota, "leer_notas": leer_notas,
+    "guardar_nota": guardar_nota, "leer_notas": leer_notas,
     "abrir_programa": abrir_programa, "abrir_web": abrir_web, "cambiar_mi_nombre": cambiar_mi_nombre,
     "crear_habilidad": crear_habilidad, "proponer_mejora": proponer_mejora, "mis_habilidades": mis_habilidades,
     "leer_mi_manual": leer_mi_manual, "leer_hoja_de_ruta": leer_hoja_de_ruta, "anotar_avance_lek": anotar_avance_lek,
-    "diagnostico": diagnostico, "ver_memoria": ver_memoria, "buscar_conversaciones": buscar_conversaciones,
+    "diagnostico": diagnostico, "buscar_conversaciones": buscar_conversaciones,
 }
 
 # --- PC: estado del equipo y organizador de archivos (mueve, nunca borra; todo se deshace y se notifica)
@@ -796,6 +775,32 @@ _defs, _funcs = herramientas_pendientes(PENDIENTES)
 HERRAMIENTAS += _defs
 FUNCIONES.update(_funcs)
 
+# --- memoria por capas y proyectos contextuales (LEK 2.0, fase 3)
+from lek.memoria_capas import Memoria, herramientas as herramientas_memoria
+from lek.proyectos_contexto import ProyectosContexto, herramientas as herramientas_proyectos
+MEMORIA_CAPAS = Memoria(ALMACEN, MEMORIA)
+if MEMORIA_CAPAS.necesita_migracion():           # antes de tocar la estructura: respaldo verificable
+    try:
+        _z = respaldo.crear(BASE, ALMACEN.con, ALMACEN._candado,
+                            nombre=f"luna-completo-antes-de-migrar-memoria-{datetime.datetime.now():%Y%m%d_%H%M%S}",
+                            conservar=10_000)
+        if not respaldo.verificar(_z)["ok"]:
+            raise RuntimeError("el respaldo previo no pasó la verificación")
+        MEMORIA_CAPAS.migrar()
+        print(f"  Memoria por capas: migrada (respaldo previo {_z.name})")
+    except Exception as _e:
+        print("  No migré la memoria por capas (sigue la anterior):", _e)
+PROYECTOS_CTX = ProyectosContexto(ALMACEN)
+_mensaje_en_curso = threading.local()
+_defs, _funcs = herramientas_memoria(MEMORIA_CAPAS, lambda: getattr(_mensaje_en_curso, "id", 0))
+_nuevas = {d["function"]["name"] for d in _defs}
+HERRAMIENTAS[:] = [h for h in HERRAMIENTAS if h["function"]["name"] not in _nuevas]
+HERRAMIENTAS += _defs
+FUNCIONES.update(_funcs)
+_defs, _funcs = herramientas_proyectos(PROYECTOS_CTX, lambda q: buscar_conversaciones(q))
+HERRAMIENTAS += _defs
+FUNCIONES.update(_funcs)
+
 # --- voz: aprender nombres y correcciones para entender mejor lo que dice Sergio
 _defs, _funcs = herramientas_voz(VOCABULARIO)
 HERRAMIENTAS += _defs
@@ -803,7 +808,9 @@ FUNCIONES.update(_funcs)
 
 
 # Herramientas que devuelven información de una clase con regla de privacidad propia
-HERRAMIENTAS_PRIVADAS = {"ver_memoria": "memoria", "leer_notas": "notas", "buscar_documentos": "documentos"}
+HERRAMIENTAS_PRIVADAS = {"ver_memoria": "memoria", "leer_notas": "notas", "buscar_documentos": "documentos",
+                         "por_que_recuerdo": "memoria", "trabajar_en": "memoria", "ver_proyecto": "memoria",
+                         "ver_pendientes": "memoria"}
 
 
 # --- análisis exacto de archivos (PDF, Word, Excel/CSV, imágenes, GLB): solo lectura, resultados privados
@@ -930,9 +937,10 @@ def construir_prompt(incluir_memoria: bool = True, contexto: str = "", con_fecha
     incluir_memoria=False cuando piensa un modelo en la nube y la memoria es solo local."""
     todos = cargar_memoria()
     if incluir_memoria:
-        recuerdos = "\n".join(f"- {d['dato']}" for d in todos[-60:]) or "- (todavía nada)"
-        if len(todos) > 60:
-            recuerdos += f"\n- (y {len(todos) - 60} recuerdos más: usa ver_memoria)"
+        try:
+            recuerdos = MEMORIA_CAPAS.texto_para_prompt(60)
+        except Exception:
+            recuerdos = "\n".join(f"- {d['dato']}" for d in todos[-60:]) or "- (todavía nada)"
     else:
         recuerdos = (f"- Tienes {len(todos)} recuerdos guardados en este PC. Por privacidad no se envían a la nube; "
                      "si los necesitas, usa ver_memoria y se procesarán en el PC.")
@@ -974,6 +982,10 @@ a las propuestas, notas o documentos.
 Memoria de conversaciones: TODO lo que hablas con {usuario} queda guardado para siempre en su PC. Si te pregunta
 por algo dicho antes que no ves aquí, búscalo con buscar_conversaciones antes de decir que no lo sabes.
 {contexto}
+Memoria por capas: cada recuerdo dice si lo confirmó {usuario} o si es inferido, temporal o externo. Lo inferido
+NO es un hecho: no lo afirmes como tal. Si un dato cambia, usa actualizar_recuerdo (no guardes dos versiones).
+Proyectos: cuando trabajen en un proyecto usa trabajar_en. Registra como 'decision' solo lo que {usuario}
+confirmó; tus ideas son 'propuesta' hasta que él las apruebe. Lo pendiente va con anotar_pendiente.
 Lo que recuerdas de {usuario}:
 {recuerdos}"""
 
@@ -993,6 +1005,32 @@ def contexto_pasado(texto: str, para_nube: bool, desde_id: int) -> str:
         partes.append("Fragmentos de conversaciones pasadas relacionados:\n" + "\n".join(
             f"- [{f['fecha'][:10]}] {'Usuario' if f['rol'] == 'usuario' else 'Tú'}: {f['contenido'][:220]}"
             for f in sorted(relacionados, key=lambda f: f["id"])))
+    return ("\n" + "\n\n".join(partes) + "\n") if partes else ""
+
+
+def contexto_de_memoria(texto: str, proyecto: dict | None, con_memoria: bool) -> str:
+    """Proyecto activo (o mencionado) y recuerdos relacionados. Con la memoria solo local y un cerebro en la nube,
+    solo se dice que existen (el detalle se pide con las herramientas y se procesa en el PC)."""
+    partes = []
+    try:
+        if proyecto:
+            if con_memoria:
+                partes.append("Proyecto activo (lo confirmado y lo propuesto están separados; no los mezcles):\n"
+                              + PROYECTOS_CTX.resumen(proyecto["slug"], corto=True))
+            else:
+                partes.append(f"Proyecto activo: {proyecto['nombre']}. Su contexto está en el PC: usa ver_proyecto si lo necesitas.")
+        else:
+            mencionado = PROYECTOS_CTX.detectar(texto)
+            if mencionado:
+                partes.append(f"Sergio mencionó el proyecto {mencionado['nombre']}. Si van a trabajar en él, usa trabajar_en.")
+        if con_memoria:
+            relacionados = MEMORIA_CAPAS.buscar(texto, k=5, proyecto="")
+            if relacionados:
+                partes.append("Recuerdos relacionados: " + "; ".join(
+                    f"#{r['id']} {r['dato']}" + ("" if r.get("tipo") in (None, "", "confirmado") else f" ({r['tipo']})")
+                    for r in relacionados))
+    except Exception as e:
+        print("  No pude armar el contexto de memoria:", e)
     return ("\n" + "\n\n".join(partes) + "\n") if partes else ""
 
 
@@ -1019,14 +1057,18 @@ def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas:
         print("  El enrutador falló, uso la cadena de siempre:", e)
         eleccion = None
     privado = bool(eleccion and eleccion.clase == "privada")   # privado desde el inicio: nada sale del PC
-    ALMACEN.guardar_mensaje("usuario", texto, cliente, privado=privado)
+    mid = ALMACEN.guardar_mensaje("usuario", texto, cliente, privado=privado)
+    _mensaje_en_curso.id = mid                  # procedencia de lo que se recuerde en este turno
+    proyecto = PROYECTOS_CTX.activo()
+    if proyecto:
+        PROYECTOS_CTX.etiquetar_mensaje(mid, proyecto["slug"])
     inicio = int(ALMACEN.meta("inicio_contexto", "0") or 0)
     recientes = [m for m in ALMACEN.ultimos_mensajes(21) if m["id"] > inicio]
     primero = CEREBRO.cadena(True)[0][0] if privado else (eleccion.cadena[0][0] if eleccion else CEREBRO.cadena()[0][0])
     para_nube = CEREBRO.ubicacion(primero) == "nube"
     con_memoria = not para_nube or CONFIG.get("privacidad", "memoria") == "nube"
     desde = recientes[0]["id"] if recientes else 0
-    contexto = contexto_pasado(texto, para_nube, desde)
+    contexto = contexto_pasado(texto, para_nube, desde) + contexto_de_memoria(texto, proyecto, con_memoria)
 
     def sistema(memoria: bool) -> dict:
         # Sin fecha ni contexto variable: así el comienzo del prompt es igual en cada turno y Ollama
@@ -1077,7 +1119,12 @@ def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas:
         print("  Ningún cerebro respondió:", e)
     if not respuesta:
         respuesta = "Listo."
-    ALMACEN.guardar_mensaje("luna", respuesta, cliente, modelo=CEREBRO.ultimo["modelo"], privado=privado)
+    lid = ALMACEN.guardar_mensaje("luna", respuesta, cliente, modelo=CEREBRO.ultimo["modelo"], privado=privado)
+    activo = PROYECTOS_CTX.activo()
+    if activo:                                   # también el pedido, por si el proyecto se activó en este turno
+        PROYECTOS_CTX.etiquetar_mensaje(mid, activo["slug"])
+        PROYECTOS_CTX.etiquetar_mensaje(lid, activo["slug"])
+    _mensaje_en_curso.id = 0
     indexar_en_segundo_plano()
     return respuesta
 
@@ -1857,6 +1904,88 @@ def pc_libre() -> bool:
 
 
 # ---------------------------------------------------------------- voz en segundo plano, memoria y autoevaluación
+# ---------------------------------------------------------------- memoria por capas y proyectos contextuales
+class RefRecuerdo(BaseModel):
+    ref: str
+    nuevo: str = ""
+
+
+@app.get("/api/memoria/recuerdos")
+def ver_recuerdos(request: Request, categoria: str = "", proyecto: str = "", todos: bool = False):
+    revisar_pin(request)
+    filas = ALMACEN._q("SELECT * FROM recuerdos ORDER BY id") if todos else MEMORIA_CAPAS.vigentes(categoria, proyecto)
+    return {"recuerdos": filas, "por_que": None}
+
+
+@app.get("/api/memoria/por_que")
+def por_que_api(request: Request, ref: str):
+    revisar_pin(request)
+    return {"explicacion": MEMORIA_CAPAS.por_que(ref)}
+
+
+@app.post("/api/memoria/olvidar")
+def olvidar_api(r: RefRecuerdo, request: Request):
+    revisar_aprobacion(request)
+    hallados = MEMORIA_CAPAS.olvidar(r.ref)
+    return {"olvidados": [h["id"] for h in hallados]}
+
+
+@app.post("/api/memoria/actualizar")
+def actualizar_api(r: RefRecuerdo, request: Request):
+    revisar_aprobacion(request)
+    try:
+        return MEMORIA_CAPAS.actualizar(r.ref, r.nuevo)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/memoria/exportar")
+def exportar_memoria(request: Request):
+    """Toda la memoria organizada (recuerdos con historial, proyectos y pendientes) en un JSON."""
+    revisar_aprobacion(request)
+    datos = MEMORIA_CAPAS.exportar()
+    datos["proyectos_contexto"] = [{**p, "items": PROYECTOS_CTX.items(p["slug"], incluir_historial=True)}
+                                   for p in PROYECTOS_CTX.todos()]
+    datos["pendientes"] = ALMACEN._q("SELECT * FROM pendientes ORDER BY id")
+    ALMACEN.auditar("exportar_memoria", {"recuerdos": len(datos["recuerdos"])})
+    return JSONResponse(datos, headers={"Content-Disposition":
+                                        f'attachment; filename="memoria-luna-{datetime.date.today()}.json"'})
+
+
+@app.post("/api/memoria/importar")
+async def importar_memoria(request: Request):
+    revisar_aprobacion(request)
+    try:
+        return MEMORIA_CAPAS.importar(await request.json())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/contexto/proyectos")
+def ver_proyectos_ctx(request: Request):
+    revisar_pin(request)
+    activo = PROYECTOS_CTX.activo()
+    return {"activo": activo["slug"] if activo else "",
+            "proyectos": [{**p, "resumen": PROYECTOS_CTX.resumen(p["slug"]),
+                           "conversaciones": PROYECTOS_CTX.conversaciones(p["slug"])} for p in PROYECTOS_CTX.todos()]}
+
+
+@app.post("/api/contexto/proyectos/{s}/activar")
+def activar_proyecto_ctx(s: str, request: Request):
+    revisar_pin(request)
+    try:
+        return {"activo": PROYECTOS_CTX.activar(s)["slug"]}
+    except KeyError:
+        raise HTTPException(404, "No existe ese proyecto")
+
+
+@app.post("/api/contexto/salir")
+def salir_proyecto_ctx(request: Request):
+    revisar_pin(request)
+    PROYECTOS_CTX.desactivar()
+    return {"activo": ""}
+
+
 class AjusteSistema(BaseModel):
     iniciar_con_windows: bool
 

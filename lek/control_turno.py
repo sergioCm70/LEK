@@ -19,7 +19,9 @@ EXTERNAS = {"buscar_internet", "buscar_documentos", "analizar_archivo", "compara
 # Herramientas que cambian algo fuera de la conversación.
 CON_EFECTOS = {"organizar_archivos", "deshacer_organizacion", "abrir_programa", "abrir_web", "crear_habilidad",
                "cambiar_mi_nombre", "olvidar", "recordar", "guardar_nota", "crear_objetivo", "corregir_oido",
-               "aprender_palabra", "anotar_avance_lek", "proponer_mejora", "anotar_pendiente", "cerrar_pendiente"}
+               "aprender_palabra", "anotar_avance_lek", "proponer_mejora", "anotar_pendiente", "cerrar_pendiente",
+               "actualizar_recuerdo", "crear_proyecto", "anotar_en_proyecto", "aprobar_propuesta", "trabajar_en",
+               "salir_de_proyecto"}
 
 
 def es_externa(nombre: str, habilidades_con_red=()) -> bool:

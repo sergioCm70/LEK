@@ -112,10 +112,10 @@ def test_automejora_autonoma_solo_si_sergio_la_activa(luna):
     assert luna.NOTIF.listar()[0]["codigo"]
 
 
-def test_olvidar_archiva(luna):
-    luna.recordar("Le gusta el café")
-    assert "No los borré" in luna.olvidar("café")
-    assert luna.ALMACEN.recuerdos(incluir_archivados=True)
+def test_olvidar_invalida_sin_borrar(luna):
+    luna.ejecutar_herramienta("recordar", {"dato": "Le gusta el café"})
+    assert "Olvidé 1" in luna.ejecutar_herramienta("olvidar", {"texto": "café"})
+    assert luna.ALMACEN.recuerdos(incluir_archivados=True)[0]["vigencia"] == "olvidado"
 
 
 def test_panel_de_inteligencia(luna):
