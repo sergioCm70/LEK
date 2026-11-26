@@ -922,6 +922,10 @@ def herramienta_es_privada(nombre: str) -> bool:
 
 REGISTRO = construir_registro()
 
+# --- niveles de autonomía y permisos por herramienta (LEK 2.0, fase 4)
+from lek.autonomia.permisos import Permisos
+PERMISOS = Permisos(DATOS, ALMACEN, avisar=lambda t, d: NOTIF.notificar("aprobacion", t, d))
+
 
 def herramientas_actuales() -> list:
     extra = [_f(n, h["descripcion"], {k: {"type": "string", "description": str(v)} for k, v in h["parametros"].items()},
@@ -929,14 +933,28 @@ def herramientas_actuales() -> list:
     return REGISTRO.definiciones() + extra
 
 
-def ejecutar_herramienta(nombre: str, argumentos, contaminado: bool = False) -> str:
-    """Ejecuta una herramienta y deja constancia en la auditoría (sin secretos ni contenido privado)."""
+def ejecutar_herramienta(nombre: str, argumentos, contaminado: bool = False, contexto: str = "conversacion",
+                         aprobado: bool = False) -> str:
+    """Ejecuta una herramienta y deja constancia en la auditoría (sin secretos ni contenido privado).
+    contexto: "conversacion" (Sergio lo pidió) o "autonomo" (iniciativa propia). aprobado: ya lo aprobó Sergio."""
     if isinstance(argumentos, str):
         try:
             argumentos = json.loads(argumentos or "{}")
         except Exception:
             argumentos = {}
     inicio = time.monotonic()
+    ficha = REGISTRO.get(nombre)
+    if ficha and not aprobado:
+        decision, motivo = PERMISOS.decidir(nombre, ficha.nivel, contexto)
+        if decision != "ejecutar":
+            _auditar_herramienta(nombre, argumentos, f"permiso:{decision}", inicio)
+            ACTIVIDAD.nota("permiso", f"{'Pide aprobación para' if decision == 'aprobar' else 'Bloqueada'} {nombre}",
+                           motivo, estado="info")
+            if decision == "bloquear":
+                return f"BLOQUEADO por los permisos: {motivo} Dile a Sergio qué querías hacer."
+            aid = PERMISOS.pedir(nombre, argumentos if isinstance(argumentos, dict) else {}, motivo, contexto)
+            return (f"PENDIENTE DE APROBACIÓN #{aid}: {motivo} No se ha hecho todavía. Dile a Sergio que puede "
+                    "aprobarlo en Módulos → Tareas autónomas (o en la notificación). No afirmes que ya lo hiciste.")
     if contaminado and nombre in control_turno.CON_EFECTOS:
         resultado = control_turno.bloqueo_por_contaminacion(nombre)
         _auditar_herramienta(nombre, argumentos, "bloqueada", inicio)
@@ -1332,7 +1350,7 @@ def revision_diaria() -> None:
                 nombre = f.get("name", "")
                 permitido = nombre in ("proponer_mejora", "diagnostico", "leer_hoja_de_ruta", "leer_mi_manual",
                                        "mis_habilidades", "buscar_internet")  # nada privado aquí
-                resultado = ejecutar_herramienta(nombre, f.get("arguments", {})) if permitido else \
+                resultado = ejecutar_herramienta(nombre, f.get("arguments", {}), contexto="autonomo") if permitido else \
                     "En la revisión diaria solo puedes investigar y proponer."
                 mensajes.append({"role": "tool", "content": resultado, "tool_name": nombre,
                                  "tool_call_id": ll.get("id", "")})
@@ -1950,7 +1968,8 @@ async def archivos_deshacer(request: Request):
 @app.get("/api/proyectos")
 def ver_proyectos_api(request: Request):
     revisar_pin(request)
-    return {**PROYECTOS.resumen_api(), "aprobaciones": PROYECTOS.aprobaciones_pendientes()}
+    return {**PROYECTOS.resumen_api(), "aprobaciones": PROYECTOS.aprobaciones_pendientes(),
+            "aprobaciones_herramientas": PERMISOS.pendientes()}
 
 
 @app.post("/api/proyectos/{pid}/{accion}")
@@ -2163,6 +2182,55 @@ def autoprueba_sandbox() -> dict:
     print("  Aislamiento de habilidades:", "todo bloqueado como debe" if not fallas else "fallas en " + ", ".join(fallas))
     if fallas:
         NOTIF.notificar("seguridad", "El aislamiento de habilidades no está completo", ", ".join(fallas))
+    return r
+
+
+class AjusteAutonomia(BaseModel):
+    nivel: int | None = None
+    herramientas: dict = {}
+
+
+@app.get("/api/autonomia")
+def ver_autonomia(request: Request):
+    revisar_pin(request)
+    return {**PERMISOS.estado(), "herramientas_con_efectos": [
+        {"nombre": f["nombre"], "nivel": f["nivel"], "categoria": f["categoria"]}
+        for f in REGISTRO.fichas() if f["nivel"] > 0]}
+
+
+@app.post("/api/autonomia")
+def cambiar_autonomia(a: AjusteAutonomia, request: Request):
+    """Cambiar el nivel o los permisos por herramienta: desde este PC o con PIN. Revocar = bajar o bloquear."""
+    revisar_aprobacion(request)
+    try:
+        d = PERMISOS.guardar(a.nivel, a.herramientas)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    NOTIF.notificar("seguridad", "Cambiaron los permisos de Luna", f"Nivel {d['nivel']}; reglas: {d['herramientas'] or 'ninguna'}")
+    return PERMISOS.estado()
+
+
+@app.get("/api/aprobaciones_herramientas")
+def ver_aprobaciones_herramientas(request: Request):
+    revisar_pin(request)
+    return {"pendientes": PERMISOS.pendientes()}
+
+
+@app.post("/api/aprobaciones_herramientas/{aid}/{accion}")
+def responder_aprobacion_herramienta(aid: int, accion: str, request: Request):
+    """Aprobar ejecuta UNA vez la acción guardada; rechazar la descarta."""
+    revisar_aprobacion(request)
+    if accion not in ("aprobar", "rechazar"):
+        raise HTTPException(404, "Acción desconocida")
+    try:
+        r = PERMISOS.responder(aid, accion == "aprobar", ejecutar=lambda n, a, c: ejecutar_herramienta(
+            n, a, contexto=c, aprobado=True))
+    except KeyError:
+        raise HTTPException(404, "No existe esa aprobación")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    if r["estado"] == "ejecutada":
+        NOTIF.notificar("tarea", f"Hecho (aprobación #{aid})", r["resultado"][:600])
     return r
 
 

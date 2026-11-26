@@ -10,7 +10,7 @@
 | 1 Estabilización | **Completada** | Críticos C1–C3 y altos A1–A7 resueltos. C4 (rotar la clave de Claude) depende de Sergio. Ver `REGISTRO_CAMBIOS.md` |
 | 2 Núcleo inteligente | **Completada (base)** | Registro único de herramientas con esquema, validación y permisos (`lek/nucleo/registro.py`); actividad en vivo (`/api/actividad`, Módulos → Actividad); agente investigador con fuentes. Ver `AGENTES_LEK.md` y `API_LEK.md`. Pendiente: sacar los endpoints de `servidor.py` a módulos (refactor mecánico, sin cambio de comportamiento) |
 | 3 Memoria por capas | **Completada** | `docs/MEMORIA_LEK.md`. Recuerdos con procedencia y vigencia, contradicciones, olvido con índices, por qué, exportar/importar, proyectos contextuales. Falta: reranking (descartado por RAM) e interfaz para editar items de proyectos |
-| 4 Autonomía | Parcial | Proyectos, tareas y aprobaciones ya existen (`lek/autonomia`). Faltan los 5 niveles configurables, permisos por herramienta y carpeta, y el panel de actividad |
+| 4 Autonomía | **Base completada** | 5 niveles, reglas por herramienta (permitir/preguntar/bloquear), aprobaciones de un solo uso que caducan, revisión diaria en modo autónomo. Ver `AUTONOMIA_LEK.md`. Pendiente: estado VERIFICANDO, permisos por carpeta y proyecto, editor de reglas en la interfaz |
 | 5 Autoevolución | Parcial | Sandbox real y aprobación humana listos. Faltan versiones e historial por habilidad, reversión desde la interfaz y propuestas de mejora del núcleo en rama aparte |
 | 6 Interfaz y voz | Parcial | HUD, subtítulos y escucha de fondo listos. Faltan streaming de respuestas, interrupción, estados "buscando/ejecutando/esperando aprobación" y diseño propio para celular |
 | 7 Multimodal | Parcial | PDF, DOCX, XLSX/CSV y GLB listos. Faltan PPTX, OCR y visión de imágenes, y la integración con Revit (pyRevit/Dynamo) |
@@ -70,4 +70,4 @@
 
 ## Próximo paso recomendado
 
-Fase 4 (autonomía): 5 niveles configurables con permisos por herramienta, carpeta y proyecto (sobre el registro), estado VERIFICANDO en las tareas y verificación del objetivo.
+Fase 7 (multimodal): OCR y visión de imágenes (planos escaneados), PPTX, y estudiar la integración con Revit (pyRevit/Dynamo) para leer modelos sin modificarlos. Luego la fase 6 (streaming, interrupción y diseño para celular).

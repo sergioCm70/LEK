@@ -479,6 +479,12 @@
   </div>
   <h2 class="tit">Escucha en segundo plano (en el PC)</h2>
   <div class="hab"><div class="dato" id="vozFondo">Cargando…</div></div>
+  <h2 class="tit">Autonomía</h2>
+  <div class="hab">
+    <label class="fila" for="nivelAutonomia">Qué puede hacer Luna sin preguntarte</label>
+    <select id="nivelAutonomia"></select>
+    <div class="dato" id="descAutonomia" style="margin-top:6px"></div>
+  </div>
   <h2 class="tit">Seguridad</h2>
   <div class="hab">
     <div class="dato" id="estadoSeguridad">Cargando…</div>
@@ -956,6 +962,17 @@ async function cargarAjustes() {
     $("modeloClaude").value = a.modelo;
   } catch (e) { $("estadoCerebro").textContent = "No pude leer los ajustes."; }
 }
+async function cargarAutonomia() {
+  try {
+    const a = await api("/api/autonomia");
+    const sel = $("nivelAutonomia"); sel.innerHTML = "";
+    for (const n of a.niveles) { const o = document.createElement("option"); o.value = n.nivel; o.textContent = `${n.nivel} · ${n.nombre}`; sel.appendChild(o); }
+    sel.value = a.nivel;
+    const desc = () => { const n = a.niveles.find(x => String(x.nivel) === sel.value); $("descAutonomia").textContent = (n ? n.descripcion : "") + (a.pendientes ? ` Hay ${a.pendientes} acción(es) esperando tu aprobación en Tareas autónomas.` : ""); };
+    desc();
+    sel.onchange = async () => { try { await api("/api/autonomia", { nivel: +sel.value }); sistema("Nivel de autonomía: " + sel.selectedOptions[0].textContent); } catch (e) { alert("No se pudo: " + motivo(e)); } cargarAutonomia(); };
+  } catch (e) { $("descAutonomia").textContent = noExiste(e) ? NO_ACTIVO : "No pude leer la autonomía."; }
+}
 async function cargarSeguridad() {
   try {
     const s = await api("/api/seguridad");
@@ -1008,7 +1025,7 @@ $("verAjustes").onclick = () => {
   $("ajustes").style.display = "block";
   $("velVoz").value = leer("vel") || "1.05"; $("tonoVoz").value = leer("tono") || "1.05"; mostrarRangos();
   if ("speechSynthesis" in window) llenarVoces();
-  cargarAjustes(); cargarVozFondo(); cargarSeguridad();
+  cargarAjustes(); cargarVozFondo(); cargarSeguridad(); cargarAutonomia();
 };
 async function cargarVozFondo() {
   const c = $("vozFondo"), { codigo, datos: v } = await consultar("/api/voz");
@@ -1734,8 +1751,18 @@ async function cargarProyectos() {
   let d;
   try { d = await api("/api/proyectos"); }
   catch (e) { c.replaceChildren(vacio(noExiste(e) ? NO_ACTIVO : "No pude leer los proyectos: " + motivo(e))); return; }
-  const lista = d.proyectos || [], aprob = d.aprobaciones || [];
+  const lista = d.proyectos || [], aprob = d.aprobaciones || [], aprobH = d.aprobaciones_herramientas || [];
   const partes = [];
+  if (aprobH.length) {
+    partes.push(el("h2", { class: "tit", style: "margin-top:0", text: "Acciones que esperan tu permiso" }));
+    for (const a of aprobH) partes.push(el("article", { class: "hab noti nueva" },
+      el("div", { class: "cab" }, el("b", { text: a.herramienta }), el("time", { datetime: a.fecha || null, text: fecha(a.fecha) })),
+      el("pre", { class: "codigo", text: JSON.stringify(a.argumentos, null, 2) }),
+      el("div", { class: "meta", text: a.motivo || "" }),
+      el("div", { class: "botones" },
+        el("button", { type: "button", class: "ok", text: "Aprobar y hacerlo", onclick: () => accionProyecto(`/api/aprobaciones_herramientas/${a.id}/aprobar`, null, "Aprobado: " + a.herramienta) }),
+        el("button", { type: "button", class: "no", text: "Rechazar", onclick: () => accionProyecto(`/api/aprobaciones_herramientas/${a.id}/rechazar`, null, "Rechazado: " + a.herramienta) }))));
+  }
   if (aprob.length) {
     partes.push(el("h2", { class: "tit", style: "margin-top:0", text: "Esperan tu permiso" }));
     for (const a of aprob) partes.push(el("article", { class: "hab noti nueva" },

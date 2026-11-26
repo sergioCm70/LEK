@@ -1,5 +1,13 @@
 # Registro de cambios
 
+## 2026-11-26 — LEK 2.0, fase 4 (autonomía por niveles)
+
+- **Niveles y permisos:** 5 niveles configurables (Ajustes → Autonomía) y reglas por herramienta: permitir, preguntar o bloquear.
+- **Aprobaciones:** las acciones que no puede hacer sola quedan como aprobación de un solo uso, con caducidad de 24 h, notificación y sección propia en Tareas autónomas.
+- **Revisión diaria:** corre en modo autónomo; lo que actúa sobre el PC pide aprobación.
+- **Investigador:** el enrutador decide por la pregunta y no por el prompt interno. En el PC se vio que la división en subtemas usaba Opus sin necesidad.
+- **Pruebas:** 397 → 403.
+
 ## 2026-11-26 — LEK 2.0, fase 2 (núcleo)
 
 - **Registro único de herramientas** (`lek/nucleo/registro.py`): esquema, validación, privacidad, externa, efectos, nivel y categoría; endpoint `/api/herramientas`.
