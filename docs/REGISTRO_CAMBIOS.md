@@ -9,6 +9,7 @@
 - **"Luna, para":** con la escucha en segundo plano, decir "Luna, para" (o detente, cállate, silencio, basta) mientras piensa o habla detiene el pedido y corta el audio. Usa una gramática cerrada de Vosk y exige el nombre primero, para que la TV no la corte. En la ventana, Esc también calla la voz.
 - **Voz por frases:** en la ventana, Luna empieza a hablar en cuanto termina la primera frase, sin esperar la respuesta completa. Si la detienes, deja de hablar.
 - **Celular:** en pantallas de hasta 700 px, en cuanto hay conversación, el núcleo se compacta arriba y la conversación ocupa la pantalla. Las lecturas y los recursos siguen en Módulos; tocar el estado muestra el panel completo. Botones en una sola fila deslizable y altura real de pantalla (`100dvh`). Revisado con capturas a 390×844.
+- **Reglas por herramienta en la interfaz (fase 4):** Ajustes → Autonomía → Reglas por herramienta. Cada acción, agrupada por categoría, se puede dejar según el nivel, permitir siempre, preguntar siempre o bloquear. Usa el mismo `/api/autonomia`, que ya auditaba y notificaba los cambios.
 - **Herramienta de desarrollo:** `scripts/generar_api_doc.py` regenera `docs/API_LEK.md` (65 rutas).
 - **Pruebas:** 407 → 421.
 
