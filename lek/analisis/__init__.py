@@ -30,7 +30,12 @@ DESCRIPCIONES = {
         "Analiza un archivo del usuario y da datos EXACTOS: PDF (páginas, palabras, tamaño de lámina, si es "
         "escaneado, títulos), Word (encabezados, párrafos, tablas), Excel/CSV (hojas, columnas, tipos, filas, "
         "suma/media/mín/máx por columna), imagen (dimensiones, formato, EXIF), GLB/glTF (nodos, mallas, "
-        "materiales, triángulos) o texto. 'ruta' puede ser la ruta completa o solo el nombre del archivo.",
+        "materiales, triángulos), PowerPoint (diapositivas, títulos, texto, notas), IFC exportado de Revit "
+        "(niveles, cantidad de muros/puertas/ventanas, espacios y sus áreas; solo lectura) o texto. "
+        "'ruta' puede ser la ruta completa o solo el nombre del archivo.",
+    "leer_texto_imagen":
+        "Lee el texto de una imagen (plano escaneado, foto de un tablero, captura) con el OCR de Windows, sin "
+        "internet. 'ruta' puede ser la ruta completa o solo el nombre del archivo. Puede tener errores de lectura.",
     "calcular_tabla":
         "Calcula sobre una tabla CSV/XLSX (p. ej. un cuadro de áreas) sin hacer cuentas de memoria. "
         "'operacion': sumar, contar, promedio, minimo, maximo, listar o columnas; también en frase, "
@@ -53,12 +58,13 @@ HERRAMIENTAS = [
        ["ruta", "operacion"]),
     _f("comparar_archivos", DESCRIPCIONES["comparar_archivos"], {"ruta_a": _txt, "ruta_b": _txt}, ["ruta_a", "ruta_b"]),
     _f("evaluar", DESCRIPCIONES["evaluar"], {"expresion": _txt}, ["expresion"]),
+    _f("leer_texto_imagen", DESCRIPCIONES["leer_texto_imagen"], {"ruta": _txt}, ["ruta"]),
 ]
 
 # Leen archivos del usuario: sus resultados son PRIVADOS (clase "documentos", igual que buscar_documentos).
 # evaluar no lee archivos; si la expresión viene de datos privados, el turno ya quedó marcado privado.
 HERRAMIENTAS_PRIVADAS = {"analizar_archivo": "documentos", "calcular_tabla": "documentos",
-                         "comparar_archivos": "documentos"}
+                         "comparar_archivos": "documentos", "leer_texto_imagen": "documentos"}
 
 
 def _seguro(funcion, *args, **kwargs) -> str:
@@ -95,8 +101,19 @@ def crear_funciones(raices) -> dict:
     def f_evaluar(expresion="", **_):
         return _seguro(evaluar, str(expresion))
 
+    def f_ocr(ruta="", **_):
+        from .multimodal import ocr_windows
+        from .archivos import IMAGENES
+
+        def hacer():
+            p = validar_ruta(ruta, _raices())
+            if p.suffix.lower() not in IMAGENES:
+                raise ErrorAnalisis("Para leer texto necesito una imagen (PNG, JPG, TIFF…). Para PDF usa analizar_archivo.")
+            return ocr_windows(p)
+        return _seguro(hacer)
+
     return {"analizar_archivo": f_analizar, "calcular_tabla": f_calcular,
-            "comparar_archivos": f_comparar, "evaluar": f_evaluar}
+            "comparar_archivos": f_comparar, "evaluar": f_evaluar, "leer_texto_imagen": f_ocr}
 
 
 __all__ = ["HERRAMIENTAS", "HERRAMIENTAS_PRIVADAS", "DESCRIPCIONES", "crear_funciones", "analizar_archivo",

@@ -391,12 +391,12 @@ def test_evaluar_rechaza_lo_peligroso(expresion, mensaje):
 # ---------------------------------------------------------------- integración con servidor.py
 def test_herramientas_con_formato_de_servidor_y_privacidad():
     nombres = [h["function"]["name"] for h in analisis.HERRAMIENTAS]
-    assert nombres == ["analizar_archivo", "calcular_tabla", "comparar_archivos", "evaluar"]
+    assert nombres == ["analizar_archivo", "calcular_tabla", "comparar_archivos", "evaluar", "leer_texto_imagen"]
     for h in analisis.HERRAMIENTAS:
         assert h["type"] == "function" and h["function"]["parameters"]["type"] == "object"
         assert set(h["function"]["parameters"]["required"]) <= set(h["function"]["parameters"]["properties"])
     assert analisis.HERRAMIENTAS_PRIVADAS == {"analizar_archivo": "documentos", "calcular_tabla": "documentos",
-                                             "comparar_archivos": "documentos"}
+                                             "comparar_archivos": "documentos", "leer_texto_imagen": "documentos"}
     assert set(analisis.crear_funciones([])) == set(nombres)
 
 

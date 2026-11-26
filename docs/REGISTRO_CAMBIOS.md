@@ -1,5 +1,14 @@
 # Registro de cambios
 
+## 2026-11-26 — LEK 2.0, fase 7 (multimodal, base)
+
+- **PowerPoint:** `analizar_archivo` lee .pptx: diapositivas en orden, títulos, texto, notas e imágenes incrustadas.
+- **IFC (BIM exportado desde Revit):** proyecto, niveles con su cota, cantidad de muros, losas, puertas, ventanas, columnas, etc., y espacios con su área cuando el IFC trae cantidades base. Solo lectura. Si el archivo no trae áreas, lo dice y explica cómo exportarlas.
+- **OCR sin internet:** herramienta nueva `leer_texto_imagen`, que usa el OCR que trae Windows (Windows.Media.Ocr). Su resultado es privado (clase documentos) y externo (no puede disparar acciones en el mismo turno).
+- **Sin librerías nuevas:** todo funciona con la biblioteca estándar de Python y PowerShell.
+- **Documentación:** `docs/INTEGRACION_REVIT.md` (opciones para leer Revit sin modificarlo).
+- **Pruebas:** 403 → 407.
+
 ## 2026-11-26 — LEK 2.0, fase 4 (autonomía por niveles)
 
 - **Niveles y permisos:** 5 niveles configurables (Ajustes → Autonomía) y reglas por herramienta: permitir, preguntar o bloquear.

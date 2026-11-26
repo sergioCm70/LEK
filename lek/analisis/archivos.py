@@ -504,6 +504,10 @@ def _tipo(p: pathlib.Path) -> str:
         return "imagen"
     if ext in (".glb", ".gltf"):
         return "gltf"
+    if ext in (".pptx", ".pptm"):
+        return "pptx"
+    if ext == ".ifc":
+        return "ifc"
     if ext in TEXTOS:
         return "texto"
     return "otro"
@@ -528,6 +532,12 @@ def analizar_archivo(ruta, raices, plazo: Plazo | None = None, usar_pillow: bool
             cuerpo = analizar_imagen(p, plazo, usar_pillow)
         elif tipo == "gltf":
             cuerpo = analizar_gltf(p, plazo)
+        elif tipo == "pptx":
+            from .multimodal import analizar_pptx
+            cuerpo = analizar_pptx(p, plazo)
+        elif tipo == "ifc":
+            from .multimodal import analizar_ifc
+            cuerpo = analizar_ifc(p, plazo)
         elif tipo == "texto":
             cuerpo = analizar_texto(p, plazo)
         else:

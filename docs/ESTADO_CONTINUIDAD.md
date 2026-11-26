@@ -13,9 +13,9 @@
 | 4 Autonomía | **Base completada** | 5 niveles, reglas por herramienta (permitir/preguntar/bloquear), aprobaciones de un solo uso que caducan, revisión diaria en modo autónomo. Ver `AUTONOMIA_LEK.md`. Pendiente: estado VERIFICANDO, permisos por carpeta y proyecto, editor de reglas en la interfaz |
 | 5 Autoevolución | Parcial | Sandbox real y aprobación humana listos. Faltan versiones e historial por habilidad, reversión desde la interfaz y propuestas de mejora del núcleo en rama aparte |
 | 6 Interfaz y voz | Parcial | HUD, subtítulos y escucha de fondo listos. Faltan streaming de respuestas, interrupción, estados "buscando/ejecutando/esperando aprobación" y diseño propio para celular |
-| 7 Multimodal | Parcial | PDF, DOCX, XLSX/CSV y GLB listos. Faltan PPTX, OCR y visión de imágenes, y la integración con Revit (pyRevit/Dynamo) |
+| 7 Multimodal | **Base completada** | PDF, DOCX, XLSX/CSV, GLB, **PPTX**, **IFC** (Revit → Exportar → IFC: niveles, conteo de elementos, espacios y áreas; solo lectura) y **OCR de Windows** (`leer_texto_imagen`, sin internet). OCR pendiente de verificar en el PC. Falta: visión (describir imágenes) con un modelo local, y lectura en vivo de Revit con pyRevit (ver `INTEGRACION_REVIT.md`) |
 | 8 Ecosistema | Parcial | Celular por LAN (con PIN). Tailscale sin instalar; Apple Watch sin iPhone confirmado; collar sin hardware |
-| 9 Validación | Continua | 369 pruebas automáticas. Criterios de aceptación en `AUDITORIA_LEK2.md` |
+| 9 Validación | Continua | 407 pruebas automáticas. Criterios de aceptación en `AUDITORIA_LEK2.md` |
 
 ## Criterios de aceptación de la fase 1
 
@@ -70,4 +70,5 @@
 
 ## Próximo paso recomendado
 
-Fase 7 (multimodal): OCR y visión de imágenes (planos escaneados), PPTX, y estudiar la integración con Revit (pyRevit/Dynamo) para leer modelos sin modificarlos. Luego la fase 6 (streaming, interrupción y diseño para celular).
+1. Cuando el PC vuelva: desplegar todo lo pendiente desde el commit cd44d19, reiniciar Luna y verificar en vivo `/api/actividad`, `/api/herramientas`, `/api/autonomia`, una investigación real y `leer_texto_imagen` con una imagen con texto.
+2. Fase 6 (streaming de respuestas, interrupción, estados visibles y diseño para celular).

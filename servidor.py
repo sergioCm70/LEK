@@ -886,7 +886,7 @@ CATEGORIAS_HERRAMIENTAS = {
     "proyectos": {"trabajar_en", "crear_proyecto", "anotar_en_proyecto", "aprobar_propuesta", "ver_proyecto",
                   "salir_de_proyecto", "crear_objetivo", "ver_proyectos"},
     "archivos": {"analizar_archivos", "organizar_archivos", "deshacer_organizacion", "analizar_archivo",
-                 "comparar_archivos", "calcular_tabla", "buscar_documentos"},
+                 "comparar_archivos", "calcular_tabla", "buscar_documentos", "leer_texto_imagen"},
     "internet": {"buscar_internet", "abrir_web", "investigar"},
     "sistema": {"abrir_programa", "estado_pc", "diagnostico", "mi_pulso"},
     "autoevolucion": {"crear_habilidad", "proponer_mejora", "mis_habilidades", "leer_mi_manual", "leer_hoja_de_ruta",
