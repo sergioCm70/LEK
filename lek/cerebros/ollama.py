@@ -8,25 +8,48 @@ import requests
 from .base import ErrorProveedor, Proveedor, Respuesta
 
 
+def leer_lineas(lineas, al_texto) -> tuple[str, list, dict]:
+    """Lee el flujo NDJSON de Ollama. Devuelve (texto, tool_calls crudos, último objeto con los conteos)."""
+    texto, llamadas, final = "", [], {}
+    for linea in lineas:
+        if not linea:
+            continue
+        try:
+            d = json.loads(linea)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if d.get("error"):
+            raise ErrorProveedor("servidor", f"Ollama: {str(d['error'])[:200]}")
+        msg = d.get("message", {})
+        if msg.get("content"):
+            texto += msg["content"]
+            al_texto(msg["content"])
+        llamadas.extend(msg.get("tool_calls") or [])
+        if d.get("done"):
+            final = d
+    return texto, llamadas, final
+
+
 class Ollama(Proveedor):
     nombre = "ollama"
     ubicacion = "local"
+    transmite = True
 
     def __init__(self, url: str):
         self.url = url.rstrip("/")
 
-    def chat(self, modelo, mensajes, herramientas):
-        cuerpo = {"model": modelo, "messages": mensajes, "stream": False, "think": False,
+    def chat(self, modelo, mensajes, herramientas, al_texto=None):
+        cuerpo = {"model": modelo, "messages": mensajes, "stream": bool(al_texto), "think": False,
                   "keep_alive": "30m",   # que no se descargue de memoria entre preguntas
                   "options": {"temperature": 0.6, "num_ctx": 8192}}
         if herramientas:
             cuerpo["tools"] = herramientas
         inicio = time.monotonic()
         try:
-            r = requests.post(f"{self.url}/api/chat", json=cuerpo, timeout=300)
+            r = requests.post(f"{self.url}/api/chat", json=cuerpo, timeout=300, stream=bool(al_texto))
             if r.status_code == 400 and "think" in r.text:  # Ollama viejo o modelo sin esa opción
                 cuerpo.pop("think")
-                r = requests.post(f"{self.url}/api/chat", json=cuerpo, timeout=300)
+                r = requests.post(f"{self.url}/api/chat", json=cuerpo, timeout=300, stream=bool(al_texto))
         except requests.Timeout:
             raise ErrorProveedor("tiempo", "Ollama no respondió en 5 minutos", reintentable=False)
         except requests.RequestException as e:
@@ -34,8 +57,17 @@ class Ollama(Proveedor):
         if r.status_code != 200:
             raise ErrorProveedor("servidor", f"Ollama respondió {r.status_code}: {r.text[:200]}",
                                  reintentable=r.status_code >= 500)
-        datos = r.json()
-        msg = datos.get("message", {})
+        if al_texto:
+            try:
+                contenido, crudas, datos = leer_lineas(r.iter_lines(decode_unicode=True), al_texto)
+            except requests.RequestException as e:
+                raise ErrorProveedor("red", f"se cortó la conexión con Ollama ({e.__class__.__name__})", reintentable=True)
+            finally:
+                r.close()
+            msg = {"content": contenido, "tool_calls": crudas}
+        else:
+            datos = r.json()
+            msg = datos.get("message", {})
         llamadas = []
         for i, ll in enumerate(msg.get("tool_calls") or []):
             f = ll.get("function", {})

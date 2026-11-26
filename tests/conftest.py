@@ -42,6 +42,11 @@ except ImportError:
             self.cookies[clave] = (valor, opciones)
 
     fr.JSONResponse = _JSONResponse
+
+    class _StreamingResponse:
+        def __init__(self, contenido, media_type=None, headers=None):
+            self.body_iterator, self.media_type, self.headers = contenido, media_type, headers or {}
+    fr.StreamingResponse = _StreamingResponse
     sys.modules.update({"fastapi": fa, "fastapi.responses": fr})
 
 from lek.cerebros.base import ErrorProveedor, Proveedor, Respuesta  # noqa: E402

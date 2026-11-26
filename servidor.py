@@ -31,10 +31,11 @@ import sys
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from lek.almacen import Almacen
+from lek import vivo
 from lek.cerebros.base import ErrorProveedor
 from lek.cerebros.catalogo import catalogo, precios_claude
 from lek.cerebros.claude import Claude
@@ -160,12 +161,17 @@ def ahora() -> str:
 
 
 # ---------------------------------------------------------------- cerebro (lek/cerebros)
-def ollama_chat(mensajes: list, usar_tools: bool = True, privado: bool = False, texto: str = "") -> dict:
+def ollama_chat(mensajes: list, usar_tools: bool = True, privado: bool = False, texto: str = "",
+                transmitir: bool = False) -> dict:
     """Piensa con el cerebro que toque y devuelve un mensaje en formato común.
-    Con `texto` (el pedido del usuario) el enrutador elige el modelo cuando el modo es "auto"."""
+    Con `texto` (el pedido del usuario) el enrutador elige el modelo cuando el modo es "auto".
+    transmitir=True: si el turno es en vivo (/api/chat/vivo), el texto sale mientras se escribe."""
     i = ACTIVIDAD.inicio("modelo", "Pensando")
+    al_texto = vivo.al_texto() if transmitir else None
+    extra = {"al_texto": al_texto} if al_texto else {}
     try:
-        r = CEREBRO.chat(mensajes, herramientas_actuales() if usar_tools else None, privado=privado, texto=texto)
+        r = CEREBRO.chat(mensajes, herramientas_actuales() if usar_tools else None, privado=privado, texto=texto,
+                         **extra)
     except Exception as e:
         ACTIVIDAD.fin(i, ok=False, detalle=str(e)[:200])
         raise
@@ -1203,7 +1209,8 @@ def _responder(texto: str, cliente: str = "web", voz: bool = False, alternativas
     contaminado, usadas, corregida = False, [], False
     try:
         for _ in range(6):  # hasta 5 rondas de herramientas (+1 de corrección)
-            msg = ollama_chat(mensajes, privado=privado, texto=texto)
+            vivo.revisar()                               # ¿pidió detenerse?
+            msg = ollama_chat(mensajes, privado=privado, texto=texto, transmitir=True)
             llamadas = msg.get("tool_calls") or []
             if not llamadas:
                 respuesta = limpiar_respuesta(msg.get("content", ""))
@@ -1214,13 +1221,19 @@ def _responder(texto: str, cliente: str = "web", voz: bool = False, alternativas
                     mensajes.append({"role": "assistant", "content": respuesta, "privado": privado})
                     mensajes.append({"role": "user", "content": control_turno.nota_de_correccion(frases),
                                      "privado": privado})
+                    if vivo.actual():
+                        vivo.actual().al_texto(None)     # la respuesta corregida reemplaza a la anterior
                     continue
                 break
             mensajes.append({"role": "assistant", "content": msg.get("content", ""), "tool_calls": llamadas,
                              "privado": privado})
+            if vivo.actual() and vivo.actual().escrito:
+                vivo.actual().al_texto(None)
             for ll in llamadas:
                 f = ll.get("function", {})
                 nombre = f.get("name", "")
+                vivo.revisar()
+                vivo.paso(f"Usando {nombre}")
                 _privado_dinamico.valor = False
                 resultado = ejecutar_herramienta(nombre, f.get("arguments", {}), contaminado=contaminado)
                 usadas.append(nombre)
@@ -1231,6 +1244,10 @@ def _responder(texto: str, cliente: str = "web", voz: bool = False, alternativas
                     mensajes[0] = sistema(True)
                 mensajes.append({"role": "tool", "content": resultado, "tool_name": nombre,
                                  "tool_call_id": ll.get("id", ""), "privado": es_privado})
+    except vivo.Cancelado:
+        a_medias = limpiar_respuesta(vivo.actual().escrito) if vivo.actual() else ""
+        respuesta = (a_medias + " …" if a_medias else "") + "(Me detuve porque me lo pediste.)"
+        ALMACEN.auditar("control", {"turno_detenido": True, "herramientas_usadas": usadas})
     except ErrorProveedor as e:
         respuesta = "Ahora mismo no logro pensar: ni el cerebro principal ni el de respaldo respondieron. " \
                     "Revisa que Ollama esté abierto."
@@ -1636,6 +1653,60 @@ def chat(m: Mensaje, request: Request):
                           alternativas=[str(a)[:300] for a in (m.alternativas or [])[:3]])
     return {"respuesta": respuesta, "asistente": mi_nombre(), "cerebro": CEREBRO.ultimo["modelo"],
             "degradado": CEREBRO.ultimo["degradado"], "aviso": CEREBRO.ultimo["aviso"]}
+
+
+@app.post("/api/chat/vivo")
+def chat_en_vivo(m: Mensaje, request: Request):
+    """Como /api/chat, pero transmite (NDJSON): el texto mientras se escribe, los pasos y el final.
+    El turno se atiende en su propio hilo; si el cliente se va, el turno termina igual y queda guardado."""
+    revisar_pin(request)
+    texto = m.texto.strip()[:2000]
+    if not texto:
+        raise HTTPException(400, "Mensaje vacío")
+    turno = vivo.nuevo()
+
+    def atender():
+        vivo.atar(turno)
+        try:
+            r = responder(texto, m.cliente[:40] or "web", voz=m.voz,
+                          alternativas=[str(a)[:300] for a in (m.alternativas or [])[:3]])
+            turno.emitir("fin", respuesta=r, asistente=mi_nombre(), cerebro=CEREBRO.ultimo["modelo"],
+                         degradado=CEREBRO.ultimo["degradado"], aviso=CEREBRO.ultimo["aviso"],
+                         detenido=turno.parar.is_set())
+        except Exception as e:                       # nunca dejar al cliente esperando
+            turno.emitir("error", f"{type(e).__name__}")
+        finally:
+            vivo.terminar(turno)
+            turno.cola.put(None)
+
+    threading.Thread(target=atender, daemon=True, name=f"turno-{turno.id}").start()
+
+    def flujo():
+        yield json.dumps({"t": "inicio", "turno": turno.id}) + "\n"
+        while True:
+            try:
+                ev = turno.cola.get(timeout=15)
+            except Exception:                          # latido: mantiene viva la conexión en turnos largos
+                yield json.dumps({"t": "latido"}) + "\n"
+                continue
+            if ev is None:
+                return
+            yield json.dumps(ev, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(flujo(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class Detener(BaseModel):
+    turno: int = 0
+
+
+@app.post("/api/cancelar")
+def cancelar_turno(d: Detener, request: Request):
+    """Detiene el turno en vivo indicado (o todos si turno=0). Lo ya hecho queda hecho y guardado."""
+    revisar_pin(request)
+    n = vivo.cancelar(d.turno or None)
+    return {"detenidos": n}
 
 
 @app.post("/api/reiniciar")

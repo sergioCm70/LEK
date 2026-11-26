@@ -116,7 +116,9 @@ class Cerebro:
                                                             f"{dia:.2f}). Hasta mañana Luna usa su cerebro local.")
 
     def chat(self, mensajes: list, herramientas: list | None = None, privado: bool = False,
-             texto: str = "") -> Respuesta:
+             texto: str = "", al_texto=None) -> Respuesta:
+        """al_texto: callback opcional para transmitir el texto mientras se escribe (si el proveedor puede).
+        Si un intento falla después de transmitir algo, se llama al_texto(None) para que el cliente lo borre."""
         reintentos = self.config.get("salud", "reintentos")
         errores = []
         cadena = self.cadena(privado, texto)
@@ -125,9 +127,19 @@ class Cerebro:
             prov = self.proveedores[info["proveedor"]]
             enviar = para_la_nube(mensajes) if info["ubicacion"] == "nube" else sin_marcas(mensajes)
             for intento in range(reintentos + 1):
+                transmitido = []
                 try:
-                    r = prov.chat(modelo, enviar, herramientas)
+                    if al_texto and getattr(prov, "transmite", False):
+                        def _cb(f, _t=transmitido):
+                            if f:
+                                _t.append(1)
+                            al_texto(f)
+                        r = prov.chat(modelo, enviar, herramientas, al_texto=_cb)
+                    else:
+                        r = prov.chat(modelo, enviar, herramientas)
                 except ErrorProveedor as e:
+                    if transmitido:
+                        al_texto(None)                 # lo escrito a medias no vale: empieza de nuevo
                     definitivo = e.tipo in ("auth", "saldo")
                     self.salud.fallo(modelo, str(e), definitivo=definitivo)
                     self.almacen.registrar_llamada(modelo, info["proveedor"], 0, ok=False, error=str(e), motivo=motivo)

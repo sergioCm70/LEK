@@ -17,6 +17,8 @@ aceptan peticiones solo del mismo origen (o de clientes sin `Origin`, como Atajo
 | GET | `/` | `inicio` |  |
 | GET | `/api/ping` | `ping` |  |
 | POST | `/api/chat` | `chat` |  |
+| POST | `/api/chat/vivo` | `chat_en_vivo` | Como /api/chat, pero transmite (NDJSON): el texto mientras se escribe, los pasos y el final. El turno se atiende en su propio hilo; si el cliente se va, el turn |
+| POST | `/api/cancelar` | `cancelar_turno` | Detiene el turno en vivo indicado (o todos si turno=0). Lo ya hecho queda hecho y guardado. |
 | POST | `/api/reiniciar` | `reiniciar` | Empieza un tema nuevo: el contexto corto se limpia, pero nada se borra (lo busca si hace falta). |
 | GET | `/api/habilidades` | `ver_habilidades` |  |
 | POST | `/api/habilidades/aprobar` | `aprobar_habilidad` |  |
@@ -58,6 +60,10 @@ aceptan peticiones solo del mismo origen (o de clientes sin `Origin`, como Atajo
 | GET | `/api/respaldos` | `ver_respaldos` |  |
 | POST | `/api/respaldos/crear` | `crear_respaldo` |  |
 | POST | `/api/respaldos/verificar` | `verificar_respaldo` |  |
+| GET | `/api/autonomia` | `ver_autonomia` |  |
+| POST | `/api/autonomia` | `cambiar_autonomia` | Cambiar el nivel o los permisos por herramienta: desde este PC o con PIN. Revocar = bajar o bloquear. |
+| GET | `/api/aprobaciones_herramientas` | `ver_aprobaciones_herramientas` |  |
+| POST | `/api/aprobaciones_herramientas/{aid}/{accion}` | `responder_aprobacion_herramienta` | Aprobar ejecuta UNA vez la acción guardada; rechazar la descarta. |
 | GET | `/api/actividad` | `ver_actividad` | Lo que Luna está haciendo ahora y lo último que hizo (sin textos privados). |
 | GET | `/api/herramientas` | `ver_herramientas` | Cada herramienta con su esquema, permisos y si es privada, externa o con efectos. |
 | POST | `/api/diagnostico/sandbox` | `probar_sandbox` | Comprueba en este PC qué barreras del sandbox funcionan de verdad (código de prueba fijo). |
@@ -65,3 +71,5 @@ aceptan peticiones solo del mismo origen (o de clientes sin `Origin`, como Atajo
 | GET | `/api/memoria` | `estado_memoria` |  |
 | POST | `/api/inteligencia/evaluar` | `evaluar_modelos` | Banco de 30 preguntas verificables (escalas, fechas, áreas, herramientas...) a cada modelo. |
 | GET | `/api/inteligencia/evaluar` | `ver_evaluacion` |  |
+
+Total: 65 rutas.

@@ -176,6 +176,11 @@
   button.enviar:hover { background:var(--halo2); }
   button.enviar:active { transform:scale(.93); }
   button.enviar:focus-visible { outline-offset:1px; }
+  button.detener { background:#b3413b; font-size:.85rem; }
+  button.detener:hover { background:#d2544c; }
+  .b.j.vivo::after { content:"▍"; opacity:.6; animation:parpadeo 1s steps(2) infinite; }
+  @keyframes parpadeo { 50% { opacity:0; } }
+  @media (prefers-reduced-motion: reduce) { .b.j.vivo::after { animation:none; } }
   .barra { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:10px; }
   .barra button, .barra label { display:inline-flex; align-items:center; gap:6px; font-size:.8rem; color:var(--tenue); background:none; border:1px solid var(--trazo2); border-radius:999px; padding:6px 12px; cursor:pointer;
                                 transition:color .2s, border-color .2s, background .2s; }
@@ -423,6 +428,7 @@
   <form id="formulario">
     <input id="entrada" type="text" placeholder="Escríbele o toca la luna para hablar" autocomplete="off" aria-label="Mensaje para Luna">
     <button class="enviar" type="submit" aria-label="Enviar">➤</button>
+    <button class="enviar detener" type="button" id="detener" aria-label="Detener la respuesta (Esc)" title="Detener (Esc)" hidden>■</button>
   </form>
   <div class="barra">
     <label><input type="checkbox" id="manos"> <span id="manosTexto">Manos libres</span></label>
@@ -822,6 +828,42 @@ function escuchar() {
 function dejarDeEscuchar() { if (rec && escuchando) { try { rec.abort(); } catch (e) {} } }
 
 // ------------------------------------------------------------ conversación
+// Turno en vivo: el texto aparece mientras Luna lo escribe. Si el servidor es viejo (sin /api/chat/vivo), usa /api/chat.
+let turnoVivo = 0;
+async function chatVivo(cuerpo, alEvento, intento = 0) {
+  const r = await fetch("/api/chat/vivo", { method: "POST", body: JSON.stringify(cuerpo),
+    headers: { "Content-Type": "application/json", "X-Asistente-Sesion": sesion } });
+  if (r.status === 401 && intento < 3) { await entrarConPin(); return chatVivo(cuerpo, alEvento, intento + 1); }
+  if (r.status === 404 || r.status === 405 || !r.body) return api("/api/chat", cuerpo);
+  if (!r.ok) { let m = ""; try { m = (await r.json()).detail || ""; } catch (e) {} const x = new Error(m || String(r.status)); x.status = r.status; throw x; }
+  const lector = r.body.getReader(), dec = new TextDecoder();
+  let resto = "", final = null;
+  for (;;) {
+    const { value, done } = await lector.read();
+    if (done) break;
+    resto += dec.decode(value, { stream: true });
+    let i;
+    while ((i = resto.indexOf("\n")) >= 0) {
+      const linea = resto.slice(0, i).trim(); resto = resto.slice(i + 1);
+      if (!linea) continue;
+      let ev; try { ev = JSON.parse(linea); } catch (e) { continue; }
+      if (ev.t === "inicio") turnoVivo = ev.turno;
+      else if (ev.t === "fin") final = ev;
+      else if (ev.t === "error") throw new Error(ev.d || "error");
+      else alEvento(ev);
+    }
+  }
+  if (!final) throw new Error("La respuesta se cortó");
+  return final;
+}
+async function detenerTurno() {
+  if (!ocupado) return;
+  $("detener").disabled = true; estado("Deteniendo…", "pensando");
+  try { await api("/api/cancelar", { turno: turnoVivo }); } catch (e) {}
+}
+$("detener").onclick = detenerTurno;
+document.addEventListener("keydown", e => { if (e.key === "Escape" && ocupado) { e.preventDefault(); detenerTurno(); } });
+
 async function enviar(texto, opciones = {}) {
   texto = texto.trim(); if (!texto || ocupado) return;
   ocupado = true; dejarDeEscuchar();
@@ -830,12 +872,30 @@ async function enviar(texto, opciones = {}) {
   estado("Pensando…", "pensando");
   const t0 = performance.now();
   const vigia = setInterval(mostrarQueHace, 700);       // "Usando buscar_internet…", "Investigador: leyendo…"
+  document.querySelector("button.enviar[type=submit]").hidden = true;
+  $("detener").hidden = false; $("detener").disabled = false;
+  let enVivo = null, escrito = "";
+  const alEvento = ev => {
+    if (ev.t === "texto") {
+      if (!enVivo) {
+        if (terminarTecleo) terminarTecleo();
+        enVivo = document.createElement("div"); enVivo.className = "b j vivo"; enVivo.setAttribute("aria-busy", "true");
+        $("chat").appendChild(enVivo);
+        estado("Escribiendo…", "pensando");
+      }
+      escrito += ev.d; enVivo.textContent = escrito.replace(/[*_#`]+/g, "");
+      $("chat").scrollTop = $("chat").scrollHeight;
+    } else if (ev.t === "reinicio") {
+      escrito = ""; if (enVivo) { enVivo.remove(); enVivo = null; }
+    } else if (ev.t === "paso") estado(ev.d + "…", "pensando");
+  };
   try {
-    const d = await api("/api/chat", { texto, cliente, voz: !!opciones.voz, alternativas: opciones.alternativas || [] });
+    const d = await chatVivo({ texto, cliente, voz: !!opciones.voz, alternativas: opciones.alternativas || [] }, alEvento);
     if (d.ultimo_id) ultimoMensaje = Math.max(ultimoMensaje, d.ultimo_id);
     telemetria(d.cerebro, (performance.now() - t0) / 1000, d.degradado);
     if (d.asistente && d.asistente !== nombre) ponerNombre(d.asistente);
-    burbuja(d.respuesta, "j");
+    if (enVivo) { enVivo.textContent = d.respuesta; enVivo.classList.remove("vivo"); enVivo.removeAttribute("aria-busy"); }
+    else burbuja(d.respuesta, "j");
     if (d.degradado && d.aviso) burbuja("⚠ " + d.aviso, "aviso");
     await decir(d.respuesta);
   } catch (e) {
@@ -843,6 +903,9 @@ async function enviar(texto, opciones = {}) {
     sistema("Sin respuesta del PC", "aviso");
   } finally {
     clearInterval(vigia);
+    if (enVivo && enVivo.classList.contains("vivo")) { enVivo.classList.remove("vivo"); enVivo.removeAttribute("aria-busy"); }
+    document.querySelector("button.enviar[type=submit]").hidden = false;
+    $("detener").hidden = true; turnoVivo = 0;
     ocupado = false;
     if (continuo) escuchar(); else reposo();
   }

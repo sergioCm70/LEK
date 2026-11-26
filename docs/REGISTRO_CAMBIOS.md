@@ -1,5 +1,14 @@
 # Registro de cambios
 
+## 2026-11-26 — LEK 2.0, fase 6 (respuestas en vivo e interrupción)
+
+- **Respuestas en vivo:** `POST /api/chat/vivo` transmite el texto mientras Claude u Ollama lo escriben (NDJSON), junto con los pasos ("Usando buscar_internet…"). La interfaz lo muestra en una burbuja que se va llenando; si el servidor no tiene la ruta nueva, usa `/api/chat` como antes.
+- **Interrumpir:** botón ■ (o tecla Esc) mientras Luna responde → `POST /api/cancelar`. Se detiene entre rondas y antes de cada herramienta; lo que ya hizo queda hecho y la conversación queda guardada con la nota "Me detuve porque me lo pediste".
+- **Sin texto fantasma:** si un cerebro falla a mitad de la respuesta y entra el de respaldo, o si la respuesta se corrige (control de afirmaciones), el cliente recibe "reinicio" y se borra lo escrito a medias.
+- **Solo la respuesta al usuario se transmite:** los prompts internos (investigador, resúmenes) nunca salen en vivo.
+- **Herramienta de desarrollo:** `scripts/generar_api_doc.py` regenera `docs/API_LEK.md` (65 rutas).
+- **Pruebas:** 407 → 416.
+
 ## 2026-11-26 — LEK 2.0, fase 7 (multimodal, base)
 
 - **PowerPoint:** `analizar_archivo` lee .pptx: diapositivas en orden, títulos, texto, notas e imágenes incrustadas.
