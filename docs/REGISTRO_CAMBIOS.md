@@ -6,8 +6,9 @@
 - **Interrumpir:** botón ■ (o tecla Esc) mientras Luna responde → `POST /api/cancelar`. Se detiene entre rondas y antes de cada herramienta; lo que ya hizo queda hecho y la conversación queda guardada con la nota "Me detuve porque me lo pediste".
 - **Sin texto fantasma:** si un cerebro falla a mitad de la respuesta y entra el de respaldo, o si la respuesta se corrige (control de afirmaciones), el cliente recibe "reinicio" y se borra lo escrito a medias.
 - **Solo la respuesta al usuario se transmite:** los prompts internos (investigador, resúmenes) nunca salen en vivo.
+- **"Luna, para":** con la escucha en segundo plano, decir "Luna, para" (o detente, cállate, silencio, basta) mientras piensa o habla detiene el pedido y corta el audio. Usa una gramática cerrada de Vosk y exige el nombre primero, para que la TV no la corte. En la ventana, Esc también calla la voz.
 - **Herramienta de desarrollo:** `scripts/generar_api_doc.py` regenera `docs/API_LEK.md` (65 rutas).
-- **Pruebas:** 407 → 416.
+- **Pruebas:** 407 → 421.
 
 ## 2026-11-26 — LEK 2.0, fase 7 (multimodal, base)
 

@@ -862,7 +862,11 @@ async function detenerTurno() {
   try { await api("/api/cancelar", { turno: turnoVivo }); } catch (e) {}
 }
 $("detener").onclick = detenerTurno;
-document.addEventListener("keydown", e => { if (e.key === "Escape" && ocupado) { e.preventDefault(); detenerTurno(); } });
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  if (ocupado) { e.preventDefault(); detenerTurno(); }
+  else if ("speechSynthesis" in window && speechSynthesis.speaking) { e.preventDefault(); speechSynthesis.cancel(); }
+});
 
 async function enviar(texto, opciones = {}) {
   texto = texto.trim(); if (!texto || ocupado) return;

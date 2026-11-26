@@ -2685,7 +2685,12 @@ def atender_voz_de_fondo(texto: str) -> str:
     """Pedido oído por la escucha en segundo plano. Si era ruido (TV, video, otra conversación),
     Luna no contesta en voz alta."""
     antes = (ALMACEN.ultimos_mensajes(1) or [{"id": 0}])[-1]["id"]
-    r = limpiar_respuesta(responder(texto, "voz", voz=True, fondo=True))
+    turno = vivo.nuevo()                       # así "Luna, para" también detiene los pedidos por voz
+    vivo.atar(turno)
+    try:
+        r = limpiar_respuesta(responder(texto, "voz", voz=True, fondo=True))
+    finally:
+        vivo.terminar(turno)
     if IGNORAR.lower() in r.lower():
         print(f"  [voz] Parecía ruido de fondo, no respondo: {texto!r}")
         ALMACEN.marcar_ruido(antes + 1)        # se conserva, pero ya no ensucia la conversación
@@ -2710,7 +2715,8 @@ def encender_despertador() -> bool:
             max_pedido_s=float(os.getenv("DESPERTADOR_MAXIMO", "25")),
             # más exigente con "Luna": la TV o un video no deben despertarla
             confianza_min=float(os.getenv("DESPERTADOR_CONFIANZA", "0.8")),
-            usar_parciales=os.getenv("DESPERTADOR_PARCIALES", "no").lower() in ("si", "sí", "1"))
+            usar_parciales=os.getenv("DESPERTADOR_PARCIALES", "no").lower() in ("si", "sí", "1"),
+            al_interrumpir=lambda: vivo.cancelar())
         faltan = d.faltan()
         if faltan:
             if modo in ("si", "sí", "1", "true", "on"):

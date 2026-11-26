@@ -105,6 +105,27 @@ def reproducir_wav(wav: bytes) -> None:
     winsound.PlaySound(wav, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
 
 
+def detener_audio() -> None:
+    """Corta lo que esté sonando con winsound (desde otro hilo). Fuera de Windows no hace nada."""
+    if sys.platform != "win32":
+        return
+    import winsound
+    with contextlib.suppress(Exception):
+        winsound.PlaySound(None, 0)
+
+
+# Órdenes para interrumpir: "Luna, para", "Luna, detente"… Se exige el nombre para que la TV no la corte.
+PALABRAS_PARAR = ("para", "pare", "detente", "detente ya", "callate", "silencio", "basta", "alto", "stop", "espera")
+
+
+def es_orden_de_parar(texto: str, nombre: str = "luna") -> bool:
+    t = _tokens(texto)
+    if _normalizar(nombre) not in t:
+        return False
+    resto = " ".join(t[t.index(_normalizar(nombre)) + 1:])
+    return any(resto == p or resto.startswith(p + " ") for p in PALABRAS_PARAR)
+
+
 def quitar_nombre(texto: str, nombre: str = "luna") -> str:
     """'Luna, ¿qué hora es?' -> '¿qué hora es?' (solo al comienzo)."""
     patron = rf"^\s*(?:(?:oye|hey|ey|hola)[\s,]+)?{re.escape(nombre)}\b[\s,.:;!¡]*"
@@ -244,6 +265,22 @@ class ReconocedorVosk:
         self._parciales_seguidos = self._parciales_seguidos + 1 if self.nombre in _tokens(parcial) else 0
         return self._parciales_seguidos >= 2
 
+    def orden(self, pcm: bytes) -> bool:
+        """¿Dijo "Luna, para" (o detente, cállate…)? Gramática cerrada: barato y difícil de confundir."""
+        rec = getattr(self, "_rec_orden", None)
+        if rec is None:
+            frases = [f"{self.nombre} {p}" for p in PALABRAS_PARAR] + ["[unk]"]
+            rec = self._rec_orden = self._vosk.KaldiRecognizer(self.modelo, self.tasa, json.dumps(frases, ensure_ascii=False))
+            with contextlib.suppress(Exception):
+                rec.SetWords(True)
+        if not rec.AcceptWaveform(pcm):
+            return False
+        r = json.loads(rec.Result() or "{}")
+        palabras = r.get("result") or []
+        if palabras and min(float(p.get("conf", 1.0)) for p in palabras) < self.confianza_min:
+            return False
+        return es_orden_de_parar(r.get("text", ""), self.nombre)
+
     def reiniciar(self) -> None:
         self._parciales_seguidos = 0
         with contextlib.suppress(Exception):
@@ -302,8 +339,13 @@ class Despertador:
                  max_pedido_s: float = 12.0, previo_s: float = 0.5, tono_s: float = 0.3,
                  umbral_min: float = 300.0, factor_umbral: float = 3.0, tono: bool = True,
                  hilo_respuesta: bool = True, reloj=time.monotonic, registro=None,
-                 confianza_min: float = 0.6, usar_parciales: bool = True):
+                 confianza_min: float = 0.6, usar_parciales: bool = True, al_interrumpir=None, detener=None):
         self.nombre = nombre
+        # al_interrumpir(): se llama si mientras piensa o habla dices "Luna, para". detener() corta el audio.
+        self.al_interrumpir = al_interrumpir
+        self._detener = detener or detener_audio
+        self._interrumpido = False
+        self.interrupciones = 0
         self.confianza_min, self.usar_parciales = confianza_min, usar_parciales
         self.al_despertar = al_despertar or (lambda texto: "")
         self.sintetizar = sintetizar
@@ -444,6 +486,12 @@ class Despertador:
         return max(self.umbral_min, (self._fondo or 0.0) * self.factor_umbral)
 
     def _procesar(self, pcm: bytes) -> None:
+        if (self._ocupado or self._pausas > 0) and self.al_interrumpir and hasattr(self._reconocedor, "orden"):
+            try:
+                if not self._interrumpido and self._reconocedor.orden(pcm):
+                    self._interrumpir()
+            except Exception as e:  # la escucha de órdenes nunca tumba el despertador
+                self.ultimo_error = f"orden: {type(e).__name__}"
         if self._pausas > 0 or self._ocupado:
             self._grabacion = None
             self._sucio = True
@@ -468,6 +516,15 @@ class Despertador:
             self.ignoradas += 1
             return
         self._activar()
+
+    def _interrumpir(self) -> None:
+        self._interrumpido = True
+        self.interrupciones += 1
+        self._registro("Me pediste parar. Me detengo.")
+        with contextlib.suppress(Exception):
+            self.al_interrumpir()
+        with contextlib.suppress(Exception):
+            self._detener()
 
     def _activar(self) -> None:
         self.activaciones += 1
@@ -536,6 +593,7 @@ class Despertador:
     def _atender(self, pcm: bytes) -> None:
         try:
             self._estado = "pensando"
+            self._interrumpido = False
             texto = quitar_nombre(self._transcribir(pcm), self.nombre)
             self.ultimo_texto = self.parcial = texto
             if not texto:  # falsa alarma o silencio: no molestar
@@ -544,6 +602,8 @@ class Despertador:
             self._registro(f"Escuché: {texto!r}")
             respuesta = (self.al_despertar(texto) or "").strip()
             self.ultima_respuesta = respuesta
+            if self._interrumpido:            # "Luna, para" mientras pensaba: no hablar
+                return
             if respuesta and self.sintetizar is not None:
                 wav = self.sintetizar(respuesta)
                 self._estado = "hablando"

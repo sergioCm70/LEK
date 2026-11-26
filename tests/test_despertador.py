@@ -381,3 +381,59 @@ def test_tono_es_wav_corto():
 def test_reproducir_fuera_de_windows_no_hace_nada(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     assert dsp.reproducir_wav(dsp.tono_wav()) is None
+
+
+# ---------------------------------------------------------------- interrumpir: "Luna, para"
+def test_es_orden_de_parar():
+    assert dsp.es_orden_de_parar("luna para")
+    assert dsp.es_orden_de_parar("Luna, cállate ya")
+    assert dsp.es_orden_de_parar("oye luna detente")
+    assert not dsp.es_orden_de_parar("para luna")                 # el nombre va primero
+    assert not dsp.es_orden_de_parar("luna parametriza el muro")  # "para" debe ser palabra completa
+    assert not dsp.es_orden_de_parar("silencio")                   # sin el nombre, la TV no la corta
+
+
+class ReconocedorConOrden(ReconocedorFalso):
+    def orden(self, pcm):
+        return dsp.es_orden_de_parar(leer_palabra(pcm))
+
+
+def test_luna_para_mientras_piensa_no_habla():
+    interrupciones, cortes = [], []
+    d = None
+
+    def luna_piensa(texto):
+        d._procesar(voz("luna para"))              # Sergio la interrumpe mientras piensa
+        return "una respuesta larguísima"
+
+    bloques = silencio(5) + [voz("luna")] + silencio(4) + pedido("explica", "todo")
+    reloj = Reloj()
+    sonidos = []
+    fuente = FuenteMemoria(bloques, al_leer=lambda i: setattr(reloj, "t", reloj.t + 0.1))
+    d = Despertador("luna", luna_piensa, fuente, ReconocedorConOrden(), sintetizar=lambda t: b"WAV:" + t.encode(),
+                    reproducir=sonidos.append, hilo_respuesta=False, reloj=reloj, registro=lambda m: None,
+                    al_interrumpir=lambda: interrupciones.append(1), detener=lambda: cortes.append(1))
+    d.correr()
+    assert interrupciones == [1] and cortes == [1] and d.interrupciones == 1
+    assert sonidos == [dsp.tono_wav()]                       # el bip sí; la respuesta no se dice
+
+
+def test_sin_orden_responde_normal_y_no_interrumpe():
+    bloques = silencio(5) + [voz("luna")] + pedido("que", "hora", "es")
+    d, _, pedidos, sonidos = armar(bloques, al_interrumpir=lambda: pytest.fail("no debía interrumpir"))
+    d._reconocedor = ReconocedorConOrden()
+    d.correr()
+    assert sonidos[-1] == b"WAV:respuesta a que hora es" and d.interrupciones == 0
+
+
+def test_reconocedor_vosk_orden_con_gramatica_cerrada():
+    vosk = _VoskFalso([
+        ("final", {"text": "luna para", "result": [{"word": "luna", "conf": 0.9}, {"word": "para", "conf": 0.92}]}),
+        ("final", {"text": "luna para", "result": [{"word": "luna", "conf": 0.9}, {"word": "para", "conf": 0.4}]}),
+        ("final", {"text": "[unk]", "result": [{"word": "[unk]", "conf": 1.0}]}),
+    ])
+    r = ReconocedorVosk("modelo", "Luna", confianza_min=0.8, vosk_mod=vosk)
+    pcm = b"\x00" * 3200
+    assert [r.orden(pcm) for _ in range(3)] == [True, False, False]
+    gramatica = json.loads(vosk.creados[-1].gramatica)
+    assert "luna para" in gramatica and "luna detente" in gramatica and "[unk]" in gramatica

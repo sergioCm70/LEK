@@ -138,3 +138,11 @@ def test_endpoint_cancelar(luna):
     assert luna.cancelar_turno(luna.Detener(turno=t.id), Peticion()) == {"detenidos": 1}
     assert t.parar.is_set()
     vivo.terminar(t)
+
+
+def test_luna_para_detiene_un_pedido_por_voz(luna):
+    """El despertador llama vivo.cancelar() al oír "Luna, para": el pedido por voz en curso se detiene."""
+    luna.FUNCIONES["hora"] = lambda **_: (vivo.cancelar(), "hecho")[1]
+    luna.PROVEEDORES["ollama"].respuestas = [llamada("hora", {}), "No debería llegar aquí."]
+    r = luna.atender_voz_de_fondo("¿qué hora es?")
+    assert "Me detuve" in r and vivo.activos() == []
