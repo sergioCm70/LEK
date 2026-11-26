@@ -790,7 +790,9 @@ from lek.nucleo import investigador as _investigador
 
 def investigar(pregunta: str = "", **_) -> str:
     def pensar_texto(prompt):
-        return ollama_chat([{"role": "user", "content": prompt}], usar_tools=False, texto=prompt).get("content", "")
+        # pasos internos (dividir, sintetizar): el enrutador decide por la PREGUNTA, no por el prompt largo interno
+        etapa = pregunta if "Fuentes:" in prompt else ""
+        return ollama_chat([{"role": "user", "content": prompt}], usar_tools=False, texto=etapa).get("content", "")
 
     def buscar(q):
         r = resultados_de_busqueda(q, 6)
