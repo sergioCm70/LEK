@@ -16,6 +16,7 @@ def armar(tmp_path, nube_ok=True, modo="auto", instalados=None):
     c = Cerebro(cfg, alm, proveedores, catalogo(LOCAL, instalados), LOCAL)
     c.esperar = lambda s: None
     cfg.cambiar("cerebro", "modo", modo)
+    cfg.cambiar("cerebro", "presupuesto_diario_usd", 0)   # estas pruebas simulan el gasto del mes en un solo día
     return c, cfg, alm
 
 
@@ -218,3 +219,21 @@ def test_como_dict_para_el_panel_no_incluye_el_texto(tmp_path):
     d = elegir("Guarda mi contraseña: gato123", c).como_dict()
     assert d["clase"] == "privada" and "gato123" not in str(d)
     assert set(d) == {"clase", "modo", "motivo", "senales", "cadena", "aviso"}
+
+
+def test_tope_diario_manda_al_local(tmp_path):
+    c, cfg, alm = armar(tmp_path)
+    cfg.cambiar("cerebro", "presupuesto_diario_usd", 0.5)
+    alm.registrar_llamada(HAIKU, "claude", 1, usd=0.6)
+    e = elegir("¿qué hora es?", c)
+    assert all(not es_nube(c, m) for m in modelos_de(e)) and "hoy" in e.aviso
+
+
+def test_aviso_al_80_por_ciento_una_sola_vez(tmp_path):
+    c, cfg, alm = armar(tmp_path)
+    avisos = []
+    c.avisar = lambda t, d: avisos.append(t)
+    alm.registrar_llamada(HAIKU, "claude", 1, usd=4.1)
+    c.revisar_presupuesto()
+    c.revisar_presupuesto()
+    assert avisos == ["Presupuesto de IA al 80 %"]

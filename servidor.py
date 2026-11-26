@@ -16,6 +16,7 @@ import platform
 import datetime
 import tempfile
 import threading
+import time
 import subprocess
 import unicodedata
 import webbrowser
@@ -30,7 +31,7 @@ import sys
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from lek.almacen import Almacen
@@ -95,6 +96,7 @@ def actualizar_catalogo() -> None:
 
 
 CEREBRO = Cerebro(CONFIG, ALMACEN, PROVEEDORES, MODELOS, MODELO)
+CEREBRO.avisar = lambda t, d: NOTIF.notificar("aviso", t, d)
 _candado = threading.Lock()
 
 # ---------------------------------------------------------------- módulos de LEK (fase 2)
@@ -109,15 +111,20 @@ from lek.autonomia.proyectos import GestorProyectos, TransicionInvalida, herrami
 from lek.autonomia.programador import Programador
 from lek.cerebros.enrutador import elegir
 from lek.voz.entender import Vocabulario, herramientas as herramientas_voz
+from lek import respaldo, inicio_windows
 
+from lek.seguridad import Seguridad, AccesoDenegado, es_local, host_permitido, origen_permitido
+SEGURIDAD = Seguridad(DATOS, ALMACEN, PIN, avisar=lambda t, d: NOTIF.notificar("seguridad", t, d))
+NOMBRES_EXTRA: set = set()                       # nombre de Tailscale, se agrega al arrancar
 VOCABULARIO = Vocabulario(DATOS)                 # nombres y correcciones para entender mejor la voz
 NOTIF = Notificador(ALMACEN)                      # Luna nunca actúa a escondidas: todo queda aquí y en un aviso
 MEMORIA = MemoriaSemantica(ALMACEN, EmbebedorOllama(OLLAMA))
 SALUD_CORPORAL = SaludCorporal(ALMACEN)           # pulso del reloj: solo en este PC
 ORGANIZADOR = Organizador(ALMACEN, config_organizador(DATOS / "organizador.json"))
 PROYECTOS = GestorProyectos(ALMACEN, avisar=lambda t: NOTIF.notificar("proyecto", "Proyectos", str(t)))
-# Automejora sin pedir permiso (riesgo bajo + pruebas superadas), siempre con aviso y el código visible.
-AUTOMEJORA_AUTONOMA = os.getenv("LUNA_AUTOMEJORA_AUTONOMA", "si").strip().lower() not in ("no", "0", "false")
+# LEK 2.0: ninguna habilidad se activa sin aprobación humana explícita (y nunca se aprueba a sí misma).
+# Solo si Sergio pone LUNA_AUTOMEJORA_AUTONOMA=si en .env se activa sola la de riesgo bajo con pruebas superadas.
+AUTOMEJORA_AUTONOMA = os.getenv("LUNA_AUTOMEJORA_AUTONOMA", "no").strip().lower() in ("si", "sí", "1", "true")
 DESPERTADOR = None
 SEGUNDO_PLANO = os.getenv("LUNA_SEGUNDO_PLANO", "si").strip().lower() not in ("no", "0", "false")
 
@@ -463,6 +470,25 @@ def cargar_habilidades() -> dict:
     return lista
 
 
+def ficha_habilidad(nombre: str, codigo: str, d: dict) -> str:
+    """Lo que Sergio necesita para decidir: archivo, dependencias, permisos, riesgos y pruebas."""
+    try:
+        modulos = sorted({(a.name if isinstance(n, ast.Import) else (n.module or "")).split(".")[0]
+                          for n in ast.walk(ast.parse(codigo)) if isinstance(n, (ast.Import, ast.ImportFrom))
+                          for a in (n.names if isinstance(n, ast.Import) else [n])})
+    except SyntaxError:
+        modulos = []
+    p = d.get("pruebas") or {}
+    casos = p.get("casos") or []
+    pruebas = (f"{sum(1 for c in casos if c.get('ok'))}/{len(casos)} ejemplos pasaron en el sandbox" if casos
+               else (p.get("error") or "sin ejecutar"))
+    red = "sí (solo sitios permitidos)" if "requests" in modulos else "no"
+    return (f"Archivo: habilidades/{nombre}.py (nuevo; no toca ningún otro). Dependencias: {', '.join(modulos) or 'ninguna'}. "
+            f"Permisos: red {red}; sin escribir archivos ni abrir programas (lo impide el sandbox). "
+            f"Riesgo: {d.get('riesgo', '?')}" + (f" ({'; '.join(d.get('motivos', [])[:4])})" if d.get("motivos") else "")
+            + f". Pruebas: {pruebas}. Se activa solo si la apruebas en Habilidades.")
+
+
 def crear_habilidad(nombre: str, codigo: str, descripcion: str = "") -> str:
     """Luna escribe una habilidad nueva. Se analiza (sin ejecutarla), se prueba aislada con sus EJEMPLOS y:
     - riesgo bajo + pruebas superadas + automejora autónoma -> se activa sola;
@@ -500,8 +526,8 @@ def crear_habilidad(nombre: str, codigo: str, descripcion: str = "") -> str:
                         d["resumen"] + " Puedes desactivarla en Habilidades.", codigo=codigo)
         return (f"{d['resumen']} La habilidad '{n}' ya está activa. Dile a Sergio qué hiciste: "
                 "el código completo quedó en sus notificaciones y puede desactivarla cuando quiera.")
-    NOTIF.notificar("codigo", f"Escribí la habilidad '{n}': necesita tu aprobación",
-                    d["resumen"] + " " + "; ".join(d.get("motivos", [])[:5]), codigo=codigo)
+    NOTIF.notificar("aprobacion", f"Escribí la habilidad '{n}': necesita tu aprobación",
+                    ficha_habilidad(n, codigo, d), codigo=codigo)
     return (f"{d['resumen']} Quedó esperando que el usuario la apruebe en el botón Habilidades; dile eso "
             "y por qué necesita su permiso.")
 
@@ -557,7 +583,19 @@ def anotar_avance_lek(avance: str, verificacion: str) -> str:
     return "Avance anotado en la bitácora de LEK."
 
 
+_cache_recursos = {"t": 0.0, "datos": None}
+
+
 def recursos() -> dict:
+    """Medición real del PC, guardada 10 s: nvidia-smi tarda y la interfaz pregunta seguido."""
+    if _cache_recursos["datos"] is not None and time.monotonic() - _cache_recursos["t"] < 10:
+        return _cache_recursos["datos"]
+    datos = _medir_recursos()
+    _cache_recursos.update(t=time.monotonic(), datos=datos)
+    return datos
+
+
+def _medir_recursos() -> dict:
     """Medición real del PC: RAM, GPU (si hay NVIDIA) y lo que Ollama tiene cargado."""
     datos = {"sistema": f"{SISTEMA} {platform.release()}", "nucleos": os.cpu_count()}
     try:
@@ -750,6 +788,14 @@ _defs, _funcs = herramientas_luna(PROYECTOS, pensar_plan)
 HERRAMIENTAS += _defs
 FUNCIONES.update(_funcs)
 
+# --- pendientes (memoria de trabajo que sobrevive a reinicios)
+from lek.pendientes import Pendientes, herramientas as herramientas_pendientes
+from lek import control_turno
+PENDIENTES = Pendientes(ALMACEN)
+_defs, _funcs = herramientas_pendientes(PENDIENTES)
+HERRAMIENTAS += _defs
+FUNCIONES.update(_funcs)
+
 # --- voz: aprender nombres y correcciones para entender mejor lo que dice Sergio
 _defs, _funcs = herramientas_voz(VOCABULARIO)
 HERRAMIENTAS += _defs
@@ -800,12 +846,55 @@ def herramientas_actuales() -> list:
     return HERRAMIENTAS + extra
 
 
-def ejecutar_herramienta(nombre: str, argumentos) -> str:
+def ejecutar_herramienta(nombre: str, argumentos, contaminado: bool = False) -> str:
+    """Ejecuta una herramienta y deja constancia en la auditoría (sin secretos ni contenido privado)."""
     if isinstance(argumentos, str):
         try:
             argumentos = json.loads(argumentos or "{}")
         except Exception:
             argumentos = {}
+    inicio = time.monotonic()
+    if contaminado and nombre in control_turno.CON_EFECTOS:
+        resultado = control_turno.bloqueo_por_contaminacion(nombre)
+        _auditar_herramienta(nombre, argumentos, "bloqueada", inicio)
+        NOTIF.notificar("seguridad", f"Bloqueé {nombre}",
+                        "Se intentó después de leer datos externos (posible instrucción escondida). Si era tuyo, pídelo de nuevo.")
+        return resultado
+    resultado = _ejecutar_herramienta(nombre, argumentos)
+    falla = resultado.startswith(("Error en ", "La habilidad falló", "No existe la herramienta", "Argumentos incorrectos"))
+    _auditar_herramienta(nombre, argumentos, "error" if falla else "ok", inicio)
+    if control_turno.es_externa(nombre, habilidades_con_red()):
+        resultado = control_turno.marcar_externo(nombre, resultado)
+    return resultado
+
+
+def habilidades_con_red() -> set:
+    """Habilidades cuyo resultado puede traer texto de internet (importan requests o urllib)."""
+    salida = set()
+    for n, h in cargar_habilidades().items():
+        try:
+            codigo = (HABILIDADES / h["archivo"]).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if re.search(r"^\s*(import|from)\s+(requests|urllib|http)\b", codigo, re.M):
+            salida.add(n)
+    return salida
+
+
+def _auditar_herramienta(nombre: str, argumentos, resultado: str, inicio: float) -> None:
+    try:
+        if herramienta_es_privada(nombre):
+            args = sorted((argumentos or {}).keys()) if isinstance(argumentos, dict) else []
+        else:
+            args = {k: str(v)[:120] for k, v in (argumentos or {}).items()} if isinstance(argumentos, dict) else {}
+        ALMACEN.auditar("herramienta", {"nombre": nombre, "argumentos": args, "resultado": resultado,
+                                        "ms": int((time.monotonic() - inicio) * 1000),
+                                        "modelo": (CEREBRO.ultimo or {}).get("modelo", "")})
+    except Exception as e:
+        print("  No pude auditar la herramienta:", e)
+
+
+def _ejecutar_herramienta(nombre: str, argumentos) -> str:
     funcion = FUNCIONES.get(nombre)
     if not funcion and nombre in cargar_habilidades():
         h = cargar_habilidades()[nombre]
@@ -951,12 +1040,21 @@ def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas:
     if mensajes[-1]["role"] == "user":
         mensajes[-1] = {**mensajes[-1], "content": nota + mensajes[-1]["content"]}
     respuesta = ""
+    contaminado, usadas, corregida = False, [], False
     try:
-        for _ in range(5):  # hasta 5 rondas de herramientas
+        for _ in range(6):  # hasta 5 rondas de herramientas (+1 de corrección)
             msg = ollama_chat(mensajes, privado=privado, texto=texto)
             llamadas = msg.get("tool_calls") or []
             if not llamadas:
                 respuesta = limpiar_respuesta(msg.get("content", ""))
+                frases = control_turno.afirmaciones_sin_respaldo(respuesta, usadas)
+                if frases and not corregida and IGNORAR.lower() not in respuesta.lower():
+                    corregida = True                     # una sola corrección: no afirmar lo que no se hizo
+                    ALMACEN.auditar("control", {"afirmacion_sin_herramienta": frases})
+                    mensajes.append({"role": "assistant", "content": respuesta, "privado": privado})
+                    mensajes.append({"role": "user", "content": control_turno.nota_de_correccion(frases),
+                                     "privado": privado})
+                    continue
                 break
             mensajes.append({"role": "assistant", "content": msg.get("content", ""), "tool_calls": llamadas,
                              "privado": privado})
@@ -964,7 +1062,9 @@ def responder(texto: str, cliente: str = "web", voz: bool = False, alternativas:
                 f = ll.get("function", {})
                 nombre = f.get("name", "")
                 _privado_dinamico.valor = False
-                resultado = ejecutar_herramienta(nombre, f.get("arguments", {}))
+                resultado = ejecutar_herramienta(nombre, f.get("arguments", {}), contaminado=contaminado)
+                usadas.append(nombre)
+                contaminado = contaminado or control_turno.es_externa(nombre, habilidades_con_red())
                 es_privado = herramienta_es_privada(nombre)
                 if es_privado and not privado:
                     privado = True                       # desde aquí el turno sigue solo en el PC
@@ -1027,13 +1127,29 @@ def resumir_dias_pendientes(maximo: int = 10) -> None:
             return
 
 
+def respaldo_diario() -> dict:
+    """Un respaldo completo verificado por día. Si falla la verificación, avisa."""
+    hoy = datetime.date.today().isoformat()
+    ya = [z for z in respaldo.listar(BASE) if hoy in z.name and "antes-de" not in z.name]
+    if ya:
+        return {"estado": "ya hecho", "archivo": ya[0].name}
+    try:
+        z = respaldo.crear(BASE, ALMACEN.con, ALMACEN._candado,
+                           conservar=int(CONFIG.get("sistema", "dias_de_respaldo") or 14))
+        v = respaldo.verificar(z)
+    except Exception as e:
+        NOTIF.notificar("error", "No pude hacer el respaldo de hoy", str(e)[:300])
+        return {"estado": "error", "detalle": str(e)}
+    ALMACEN.auditar("respaldo", {"archivo": z.name, "ok": v["ok"], "conteos": v.get("conteos")})
+    if not v["ok"]:
+        NOTIF.notificar("error", "El respaldo de hoy no pasó la verificación", "; ".join(v["problemas"][:3]))
+    return v
+
+
 def revision_diaria() -> None:
     """Iniciativa propia: una vez al día revisa su estado y las últimas conversaciones y, si encuentra
     una mejora valiosa, la registra como propuesta. Nunca ejecuta cambios (nivel 1)."""
-    try:
-        ALMACEN.respaldar()
-    except Exception as e:
-        print("  No pude hacer el respaldo diario:", e)
+    respaldo_diario()
     resumir_dias_pendientes()
     est = leer_json(ESTADO, {})
     if est.get("ultima_revision") == datetime.date.today().isoformat():
@@ -1187,12 +1303,22 @@ def es_remoto(request: Request) -> bool:
         return False
 
 
+def ip_de(request: Request) -> str:
+    return request.client.host if request.client else ""
+
+
+def desde_este_pc(request: Request) -> bool:
+    return es_local(ip_de(request))
+
+
 def revisar_pin(request: Request) -> None:
-    if not PIN and es_remoto(request):
-        raise HTTPException(status_code=403, detail="Para usar a Luna fuera de casa primero ponle un PIN: "
-                                                    "en el PC abre cambiar_pin.bat.")
-    if PIN and not secrets.compare_digest(request.headers.get("x-asistente-pin", ""), PIN):
-        raise HTTPException(status_code=401, detail="PIN incorrecto")
+    """Desde este PC pasa; desde cualquier otro dispositivo hace falta sesión o PIN (con bloqueo por intentos)."""
+    try:
+        SEGURIDAD.autorizar(ip_de(request), desde_este_pc(request),
+                            sesion=request.headers.get("x-asistente-sesion", "") or request.cookies.get("luna_sesion", ""),
+                            pin=request.headers.get("x-asistente-pin", ""))
+    except AccesoDenegado as e:
+        raise HTTPException(status_code=e.codigo, detail=e.mensaje)
 
 
 class Mensaje(BaseModel):
@@ -1244,6 +1370,78 @@ def agregar_vocabulario(p: Palabra, request: Request):
     return {"mensaje": VOCABULARIO.aprender_palabra(p.palabra)}
 
 
+# ---------------------------------------------------------------- seguridad de acceso
+@app.middleware("http")
+async def filtro_de_origen(request: Request, call_next):
+    """Contra DNS rebinding (Host) y contra páginas de otros sitios que intenten dar órdenes (CSRF)."""
+    host = request.headers.get("host", "")
+    if not host_permitido(host, NOMBRES_EXTRA):
+        return JSONResponse({"detail": "Nombre de servidor no permitido"}, status_code=400)
+    if request.url.path.startswith("/api/") and not origen_permitido(
+            request.method, host, request.headers.get("origin", ""), request.headers.get("sec-fetch-site", "")):
+        ALMACEN.auditar("seguridad", {"accion": "origen_rechazado", "ruta": request.url.path,
+                                      "origen": request.headers.get("origin", "")[:100]})
+        return JSONResponse({"detail": "Petición de otro sitio rechazada"}, status_code=403)
+    respuesta = await call_next(request)
+    respuesta.headers.setdefault("X-Content-Type-Options", "nosniff")
+    respuesta.headers.setdefault("X-Frame-Options", "DENY")
+    respuesta.headers.setdefault("Referrer-Policy", "no-referrer")
+    return respuesta
+
+
+class EntradaPin(BaseModel):
+    pin: str = ""
+    dispositivo: str = ""
+
+
+class CambioPin(BaseModel):
+    nuevo: str
+    actual: str = ""
+
+
+@app.post("/api/sesion")
+def abrir_sesion(e: EntradaPin, request: Request):
+    """Cambia el PIN por una sesión del dispositivo (30 días sin uso). El navegador ya no guarda el PIN."""
+    if desde_este_pc(request):
+        return {"sesion": "", "local": True}
+    try:
+        token = SEGURIDAD.crear_sesion(e.pin, ip_de(request), e.dispositivo or request.headers.get("user-agent", ""))
+    except AccesoDenegado as x:
+        raise HTTPException(x.codigo, x.mensaje)
+    r = JSONResponse({"sesion": token, "dias": 30})
+    r.set_cookie("luna_sesion", token, max_age=30 * 86400, httponly=True, samesite="strict",
+                 secure=request.url.scheme == "https")
+    return r
+
+
+@app.get("/api/seguridad")
+def estado_seguridad(request: Request):
+    revisar_pin(request)
+    est = SEGURIDAD.estado(desde_este_pc(request))
+    if desde_este_pc(request):
+        est["lista_sesiones"] = SEGURIDAD.sesiones_activas()[:20]
+    return est
+
+
+@app.post("/api/seguridad/pin")
+def cambiar_pin_api(c: CambioPin, request: Request):
+    """Poner o cambiar el PIN. Desde este PC basta; desde otro dispositivo hace falta el PIN actual."""
+    revisar_pin(request)
+    try:
+        return {"mensaje": SEGURIDAD.cambiar_pin(c.nuevo, c.actual, desde_pc=desde_este_pc(request))}
+    except AccesoDenegado as x:
+        raise HTTPException(x.codigo, x.mensaje)
+
+
+@app.post("/api/seguridad/cerrar_sesiones")
+def cerrar_sesiones(request: Request):
+    revisar_aprobacion(request)
+    n = SEGURIDAD.revocar_sesiones()
+    ALMACEN.auditar("seguridad", {"accion": "cerrar_sesiones", "n": n})
+    NOTIF.notificar("seguridad", "Sesiones cerradas", f"Se cerraron {n} sesiones: cada dispositivo pedirá el PIN otra vez.")
+    return {"cerradas": n}
+
+
 @app.get("/")
 def inicio():
     return FileResponse(BASE / "static" / "index.html", headers={"Cache-Control": "no-cache"})
@@ -1281,10 +1479,8 @@ class Nombre(BaseModel):
 
 
 def revisar_aprobacion(request: Request) -> None:
-    """Aprobar código es delicado: con PIN, o sin PIN solo desde el mismo PC."""
+    """Aprobar código o mover archivos: desde este PC, o desde otro dispositivo con sesión/PIN."""
     revisar_pin(request)
-    if not PIN and (request.client.host if request.client else "") not in ("127.0.0.1", "::1"):
-        raise HTTPException(403, "Para aprobar habilidades desde el celular, ponle un PIN en .env")
 
 
 @app.get("/api/habilidades")
@@ -1661,6 +1857,74 @@ def pc_libre() -> bool:
 
 
 # ---------------------------------------------------------------- voz en segundo plano, memoria y autoevaluación
+class AjusteSistema(BaseModel):
+    iniciar_con_windows: bool
+
+
+@app.get("/api/sistema")
+def ver_sistema(request: Request):
+    revisar_pin(request)
+    return {"iniciar_con_windows": bool(CONFIG.get("sistema", "iniciar_con_windows")),
+            "inicio": inicio_windows.estado(BASE), "aislamiento": __import__("lek.automejora.aislamiento_windows",
+                                                                            fromlist=["estado"]).estado()}
+
+
+@app.post("/api/sistema")
+def cambiar_sistema(a: AjusteSistema, request: Request):
+    revisar_aprobacion(request)
+    CONFIG.cambiar("sistema", "iniciar_con_windows", a.iniciar_con_windows)
+    r = inicio_windows.asegurar(BASE, a.iniciar_con_windows)
+    ALMACEN.auditar("sistema", {"iniciar_con_windows": a.iniciar_con_windows, "resultado": r})
+    return {"iniciar_con_windows": a.iniciar_con_windows, "resultado": r}
+
+
+@app.get("/api/respaldos")
+def ver_respaldos(request: Request):
+    revisar_pin(request)
+    return {"respaldos": [{"archivo": z.name, "megas": round(z.stat().st_size / 1e6, 2),
+                           "fecha": datetime.datetime.fromtimestamp(z.stat().st_mtime).isoformat(timespec="minutes")}
+                          for z in respaldo.listar(BASE)],
+            "como_restaurar": "Cierra a Luna y abre restaurar.bat en la carpeta de Luna."}
+
+
+@app.post("/api/respaldos/crear")
+def crear_respaldo(request: Request):
+    revisar_aprobacion(request)
+    z = respaldo.crear(BASE, ALMACEN.con, ALMACEN._candado, conservar=int(CONFIG.get("sistema", "dias_de_respaldo") or 14))
+    v = respaldo.verificar(z)
+    ALMACEN.auditar("respaldo", {"archivo": z.name, "ok": v["ok"], "manual": True})
+    return v
+
+
+class ArchivoRespaldo(BaseModel):
+    archivo: str
+
+
+@app.post("/api/respaldos/verificar")
+def verificar_respaldo(a: ArchivoRespaldo, request: Request):
+    revisar_pin(request)
+    ruta = (DATOS / "respaldos" / pathlib.Path(a.archivo).name)
+    if not ruta.exists():
+        raise HTTPException(404, "No existe ese respaldo")
+    return respaldo.verificar(ruta)
+
+
+@app.post("/api/diagnostico/sandbox")
+def probar_sandbox(request: Request):
+    """Comprueba en este PC qué barreras del sandbox funcionan de verdad (código de prueba fijo)."""
+    revisar_aprobacion(request)
+    from lek.automejora import aislamiento_windows
+    from lek.automejora.sandbox import ejecutar_aislado
+    if not aislamiento_windows.disponible():
+        return {"disponible": False, "detalle": "El aislamiento de Windows solo aplica en Windows."}
+    r = aislamiento_windows.autoprueba(ejecutar_aislado, DATOS / "sandbox" / "prueba")
+    ALMACEN.auditar("diagnostico", {"sandbox": {k: v["obtenido"] for k, v in r["pruebas"].items()}})
+    NOTIF.notificar("diagnostico", "Probé el aislamiento de habilidades",
+                    "Todo bloqueado como debe" if r["todo_ok"] else
+                    "Algunas barreras no funcionan: " + ", ".join(k for k, v in r["pruebas"].items() if not v["ok"]))
+    return r
+
+
 @app.get("/api/voz")
 def estado_voz(request: Request):
     revisar_pin(request)
@@ -1940,6 +2204,8 @@ def main():
     bautizo()
     ip = ip_local()
     ts = tailscale_info()
+    if ts and ts.get("nombre"):
+        NOMBRES_EXTRA.add(ts["nombre"].lower().rstrip("."))
     crt, key = certificado(ip, (ts.get("ip", ""),), (ts.get("nombre", ""), ts.get("corto", "")))
     ident = cargar_identidad()
     print("\n  " + "=" * 52)
@@ -1952,15 +2218,22 @@ def main():
     print(f"  En el celular: https://{ip}:{PUERTO}   (misma Wi-Fi)")
     if ts:
         print(f"  Desde la calle (Tailscale): https://{ts['nombre'] or ts['ip']}:{PUERTO}")
-        if not PIN:
-            print("  OJO: fuera de casa Luna no responde hasta que le pongas un PIN (cambiar_pin.bat)")
-    print(f"  PIN: {'activado' if PIN else 'sin PIN (ponlo en .env)'}")
+        if not SEGURIDAD.hay_pin():
+            print("  OJO: fuera del PC Luna no responde hasta que le pongas un PIN (Ajustes > Seguridad)")
+    print(f"  PIN: {'activado (cifrado)' if SEGURIDAD.hay_pin() else 'sin PIN: solo este PC puede usar a Luna (Ajustes > Seguridad)'}")
     print(f"  Habilidades activas: {len(cargar_habilidades())}")
     print(f"  Memoria: {ALMACEN.total_mensajes()} mensajes guardados para siempre, {len(cargar_memoria())} recuerdos")
     print("  Para apagar: cierra esta ventana o Ctrl+C")
     print("  " + "=" * 52 + "\n")
     if not clave_claude():  # con Claude no hace falta ocupar RAM con el modelo local
         threading.Thread(target=calentar_cerebro, daemon=True).start()
+    try:  # Sergio pidió que Luna arranque al prender el PC
+        r = inicio_windows.asegurar(BASE, bool(CONFIG.get("sistema", "iniciar_con_windows")))
+        if r == "creado":
+            NOTIF.notificar("sistema", "Luna arrancará con Windows", "Se quita en Ajustes > Seguridad y sistema.")
+            print("  Inicio automático con Windows: activado")
+    except Exception as e:
+        print("  No pude configurar el inicio con Windows:", e)
     voz_fondo = encender_despertador()
     if ABRIR_VENTANA:
         # Si ya escucha "Luna" en segundo plano, la ventana abre sin micrófono (si no, respondería dos veces).
@@ -1993,9 +2266,11 @@ IGNORAR = "[IGNORAR]"
 def atender_voz_de_fondo(texto: str) -> str:
     """Pedido oído por la escucha en segundo plano. Si era ruido (TV, video, otra conversación),
     Luna no contesta en voz alta."""
+    antes = (ALMACEN.ultimos_mensajes(1) or [{"id": 0}])[-1]["id"]
     r = limpiar_respuesta(responder(texto, "voz", voz=True, fondo=True))
     if IGNORAR.lower() in r.lower():
         print(f"  [voz] Parecía ruido de fondo, no respondo: {texto!r}")
+        ALMACEN.marcar_ruido(antes + 1)        # se conserva, pero ya no ensucia la conversación
         return ""
     return r
 

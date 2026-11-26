@@ -216,6 +216,9 @@ def elegir(texto: str, cerebro, privado: bool = False) -> Eleccion:
         elif nube and gasto >= tope:
             descartes[m] = "presupuesto del mes agotado"
             aviso = "Se alcanzó el presupuesto del mes: uso el cerebro local."
+        elif nube and _tope_dia_agotado(cerebro.almacen, cfg):
+            descartes[m] = "tope de gasto de hoy agotado"
+            aviso = "Se alcanzó el tope de gasto de hoy: uso el cerebro local hasta mañana."
         elif not cerebro.salud.disponible(m):
             descartes[m] = "en pausa por fallos"
         else:
@@ -353,3 +356,8 @@ def precision(banco: list | None = None, privacidad: dict | None = None) -> dict
             fallos.append({"texto": texto, "esperada": esperada, "obtenida": obtenida, "senales": senales})
     return {"total": len(banco), "aciertos": len(banco) - len(fallos),
             "porcentaje": round((len(banco) - len(fallos)) / len(banco) * 100, 1), "fallos": fallos}
+
+
+def _tope_dia_agotado(almacen, cfg: dict) -> bool:
+    dia = float(cfg["cerebro"].get("presupuesto_diario_usd") or 0)
+    return dia > 0 and hasattr(almacen, "gasto_del_dia") and almacen.gasto_del_dia() >= dia

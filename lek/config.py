@@ -15,6 +15,7 @@ POR_DEFECTO = {
         "principal": "claude-haiku-5-5",      # se usa si hay clave de Claude
         "respaldo": "",                       # vacío = el modelo local de .env
         "presupuesto_mensual_usd": 5.0,
+        "presupuesto_diario_usd": 0.5,        # tope por día (LEK 2.0); 0 = sin tope diario
     },
     "privacidad": {                           # "local" = nunca sale del PC; "nube" = puede ir a la nube
         "memoria": "local",
@@ -26,6 +27,10 @@ POR_DEFECTO = {
         "fallos_para_pausar": 3,
         "minutos_de_pausa": 5,
         "reintentos": 1,
+    },
+    "sistema": {
+        "iniciar_con_windows": True,          # Sergio lo pidió: Luna arranca al prender el PC
+        "dias_de_respaldo": 14,
     },
 }
 

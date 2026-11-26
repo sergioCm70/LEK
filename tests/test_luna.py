@@ -88,16 +88,28 @@ def test_crear_y_aprobar_habilidad(luna):
     luna.aprobar_habilidad(luna.Nombre(nombre="duplicar"), Peticion())
     assert luna.ejecutar_herramienta("hab_duplicar", {"n": "21"}).startswith("42")   # corre aislada
     notifs = luna.NOTIF.listar()
-    assert all(n["tipo"] == "codigo" and n["codigo"] for n in notifs[:2])
+    assert all(n["tipo"] in ("codigo", "aprobacion") and n["codigo"] for n in notifs[:2])
 
 
-def test_automejora_segura_se_activa_sola_y_avisa(luna):
+def test_habilidad_segura_igual_espera_aprobacion_humana(luna):
+    """LEK 2.0: ni siquiera el código de riesgo bajo con pruebas superadas se activa solo."""
     codigo = ('DESCRIPCION = "Triplica"\nPARAMETROS = {"n": "número"}\ndef ejecutar(n):\n    return str(int(n) * 3)\n'
               'EJEMPLOS = [{"args": {"n": "2"}, "espera_contiene": "6"}]')
-    assert "ya está activa" in luna.crear_habilidad("triplicar", codigo)
-    assert luna.ejecutar_herramienta("hab_triplicar", {"n": "5"}) == "15"
+    r = luna.crear_habilidad("triplicar", codigo)
+    assert "apruebe" in r and "hab_triplicar" not in luna.cargar_habilidades()
     n = luna.NOTIF.listar()[0]
-    assert n["tipo"] == "codigo" and "int(n) * 3" in n["codigo"]
+    assert n["tipo"] == "aprobacion" and "int(n) * 3" in n["codigo"]
+    assert "habilidades/triplicar.py" in n["detalle"] and "1/1 ejemplos pasaron" in n["detalle"]
+    luna.aprobar_habilidad(luna.Nombre(nombre="triplicar"), Peticion())
+    assert luna.ejecutar_herramienta("hab_triplicar", {"n": "5"}) == "15"
+
+
+def test_automejora_autonoma_solo_si_sergio_la_activa(luna):
+    luna.AUTOMEJORA_AUTONOMA = True
+    codigo = ('DESCRIPCION = "Duplica"\nPARAMETROS = {"n": "número"}\ndef ejecutar(n):\n    return str(int(n) * 2)\n'
+              'EJEMPLOS = [{"args": {"n": "2"}, "espera_contiene": "4"}]')
+    assert "ya está activa" in luna.crear_habilidad("duplica", codigo)
+    assert luna.NOTIF.listar()[0]["codigo"]
 
 
 def test_olvidar_archiva(luna):
@@ -141,16 +153,19 @@ def test_catalogo_incluye_modelos_instalados():
     assert "nomic-embed-text:latest" not in m
 
 
-def test_fuera_de_casa_exige_pin(luna):
-    remoto, casa = Peticion(host="100.101.102.103"), Peticion(host="192.168.20.30")
+def test_fuera_del_pc_siempre_exige_pin(luna):
+    remoto, casa, pc = Peticion(host="100.101.102.103"), Peticion(host="192.168.20.30"), Peticion()
+    for p in (remoto, casa):                                   # sin PIN configurado: cerrado para otros dispositivos
+        with pytest.raises(Exception) as e:
+            luna.revisar_pin(p)
+        assert getattr(e.value, "status_code", None) == 403
+    luna.revisar_pin(pc)                                       # el propio PC siempre pasa
+    luna.cambiar_pin_api(luna.CambioPin(nuevo="582914"), pc)
     with pytest.raises(Exception) as e:
-        luna.revisar_pin(remoto)
-    assert getattr(e.value, "status_code", None) == 403
-    luna.revisar_pin(casa)                                   # en la Wi-Fi de casa, sin PIN, sigue igual
-    luna.PIN = "4321"
-    with pytest.raises(Exception):
-        luna.revisar_pin(remoto)
-    luna.revisar_pin(Peticion(host="100.101.102.103", pin="4321"))
+        luna.revisar_pin(casa)
+    assert e.value.status_code == 401
+    luna.revisar_pin(Peticion(host="192.168.20.30", pin="582914"))
+    assert "582914" not in open(luna.DATOS / "secretos.json", encoding="utf-8").read()   # guardado cifrado
 
 
 def test_certificado_incluye_nombre_de_tailscale(luna):

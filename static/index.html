@@ -476,6 +476,16 @@
   </div>
   <h2 class="tit">Escucha en segundo plano (en el PC)</h2>
   <div class="hab"><div class="dato" id="vozFondo">Cargando…</div></div>
+  <h2 class="tit">Seguridad</h2>
+  <div class="hab">
+    <div class="dato" id="estadoSeguridad">Cargando…</div>
+    <label class="fila" for="pinNuevo">PIN nuevo (6 o más dígitos o letras)</label>
+    <input type="password" id="pinNuevo" autocomplete="new-password" inputmode="numeric">
+    <label class="fila" for="pinActual" id="pinActualEtiqueta">PIN actual (solo si lo cambias desde otro dispositivo)</label>
+    <input type="password" id="pinActual" autocomplete="current-password" inputmode="numeric">
+    <div class="botones"><button class="ok" id="guardarPin">Guardar PIN</button><button class="no" id="cerrarSesiones">Cerrar sesión en todos los dispositivos</button></div>
+    <div class="dato" style="margin-top:8px">Sin PIN, Luna solo responde en este PC. Con PIN, el celular (misma Wi-Fi o Tailscale) entra una vez y queda con una sesión de 30 días. Cinco PIN incorrectos bloquean ese dispositivo.</div>
+  </div>
 </div></div>
 
 <div id="intel" class="cajon" role="dialog" aria-label="Inteligencia"><div class="caja">
@@ -565,7 +575,9 @@ const $ = id => document.getElementById(id);
 const guardar = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 const leer = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 
-let pin = leer("pin") || "";
+// El PIN ya no se guarda en el navegador: se cambia por una sesión que caduca (30 días sin uso).
+let sesion = leer("sesion") || "";
+try { localStorage.removeItem("pin"); } catch (e) {}
 let cliente = leer("cliente");
 if (!cliente) { cliente = Math.random().toString(36).slice(2, 12); guardar("cliente", cliente); }
 let nombre = "";
@@ -576,17 +588,28 @@ const reducido = () => !!(window.matchMedia && matchMedia("(prefers-reduced-moti
 const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 // ------------------------------------------------------------ servidor
-async function api(ruta, cuerpo) {
+async function entrarConPin() {
+  const p = prompt("PIN de Luna:");
+  if (p === null) throw new Error("sin PIN");
+  const r = await fetch("/api/sesion", { method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ pin: p.trim(), dispositivo: navigator.userAgent.slice(0, 80) }) });
+  if (r.status === 429 || r.status === 403) { let m = "Acceso bloqueado"; try { m = (await r.json()).detail || m; } catch (e) {} burbuja(m, "aviso"); throw new Error(m); }
+  if (!r.ok) { burbuja("PIN incorrecto.", "aviso"); throw new Error("PIN incorrecto"); }
+  sesion = (await r.json()).sesion || ""; guardar("sesion", sesion);
+}
+async function api(ruta, cuerpo, intento = 0) {
   const r = await fetch(ruta, {
     method: cuerpo ? "POST" : "GET",
-    headers: { "Content-Type": "application/json", "X-Asistente-Pin": pin },
+    headers: { "Content-Type": "application/json", "X-Asistente-Sesion": sesion },
     body: cuerpo ? JSON.stringify(cuerpo) : undefined,
   });
-  if (r.status === 401) {
-    const p = prompt("PIN del asistente:");
-    if (p === null) throw new Error("sin PIN");
-    pin = p.trim(); guardar("pin", pin);
-    return api(ruta, cuerpo);
+  if (r.status === 401 && intento < 3) {
+    await entrarConPin();
+    return api(ruta, cuerpo, intento + 1);
+  }
+  if (r.status === 429) {
+    let m = "Demasiados intentos"; try { m = (await r.json()).detail || m; } catch (e) {}
+    burbuja(m, "aviso"); const x = new Error(m); x.status = 429; throw x;
   }
   if (r.status === 403) {
     let m = "Acceso no permitido"; try { m = (await r.json()).detail || m; } catch (e) {}
@@ -598,7 +621,7 @@ async function api(ruta, cuerpo) {
 // Consulta silenciosa para los sondeos de fondo: nunca pide PIN ni escribe en el chat.
 async function consultar(ruta) {
   try {
-    const r = await fetch(ruta, { headers: { "X-Asistente-Pin": pin } });
+    const r = await fetch(ruta, { headers: { "X-Asistente-Sesion": sesion } });
     enlace(true);
     if (!r.ok) return { codigo: r.status, datos: null };
     return { codigo: r.status, datos: await r.json() };
@@ -882,6 +905,26 @@ async function cargarAjustes() {
     $("modeloClaude").value = a.modelo;
   } catch (e) { $("estadoCerebro").textContent = "No pude leer los ajustes."; }
 }
+async function cargarSeguridad() {
+  try {
+    const s = await api("/api/seguridad");
+    $("estadoSeguridad").textContent = (s.hay_pin ? "PIN activado (guardado cifrado). " : "Sin PIN: solo este PC puede usar a Luna. ")
+      + `${s.sesiones} dispositivo(s) con sesión abierta.` + (s.bloqueo_global ? " Acceso remoto bloqueado por intentos fallidos." : "")
+      + (s.bloqueos ? ` ${s.bloqueos} dispositivo(s) bloqueado(s) ahora.` : "");
+    $("pinActual").hidden = $("pinActualEtiqueta").hidden = !!s.desde_pc;
+  } catch (e) { $("estadoSeguridad").textContent = "No pude leer el estado de seguridad."; }
+}
+$("guardarPin").onclick = async () => {
+  try {
+    const r = await api("/api/seguridad/pin", { nuevo: $("pinNuevo").value, actual: $("pinActual").value });
+    $("pinNuevo").value = $("pinActual").value = ""; sistema(r.mensaje || "PIN guardado"); cargarSeguridad();
+  } catch (e) { alert("No se pudo: " + motivo(e)); }
+};
+$("cerrarSesiones").onclick = async () => {
+  if (!confirm("¿Cerrar la sesión en todos los dispositivos? Tendrán que escribir el PIN de nuevo.")) return;
+  try { const r = await api("/api/seguridad/cerrar_sesiones", {}); sistema(`Sesiones cerradas: ${r.cerradas}`); cargarSeguridad(); }
+  catch (e) { alert("No se pudo: " + motivo(e)); }
+};
 async function guardarCerebro(cuerpo) {
   $("estadoCerebro").textContent = "Probando…";
   try { await api("/api/ajustes", cuerpo); $("claveClaude").value = ""; }
@@ -914,7 +957,7 @@ $("verAjustes").onclick = () => {
   $("ajustes").style.display = "block";
   $("velVoz").value = leer("vel") || "1.05"; $("tonoVoz").value = leer("tono") || "1.05"; mostrarRangos();
   if ("speechSynthesis" in window) llenarVoces();
-  cargarAjustes(); cargarVozFondo();
+  cargarAjustes(); cargarVozFondo(); cargarSeguridad();
 };
 async function cargarVozFondo() {
   const c = $("vozFondo"), { codigo, datos: v } = await consultar("/api/voz");

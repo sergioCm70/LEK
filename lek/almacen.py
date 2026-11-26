@@ -152,8 +152,12 @@ class Almacen:
 
     def ultimos_mensajes(self, n: int = 20) -> list:
         """Los últimos mensajes de todas las conversaciones (PC, celular y collar son una sola charla)."""
-        filas = self._q("SELECT * FROM mensajes ORDER BY id DESC LIMIT ?", (n,))
+        filas = self._q("SELECT * FROM mensajes WHERE coalesce(origen, '') != 'ruido' ORDER BY id DESC LIMIT ?", (n,))
         return list(reversed(filas))
+
+    def marcar_ruido(self, desde_id: int) -> None:
+        """Lo que oyó la escucha y resultó ser ruido (TV, videos): no se borra, pero deja de usarse como contexto."""
+        self._x("UPDATE mensajes SET origen = 'ruido' WHERE id >= ?", (desde_id,))
 
     def buscar_mensajes(self, consulta: str, limite: int = 6, antes_de_id: int = 0) -> list:
         """Mensajes pasados relacionados con la consulta, con su fecha."""
@@ -235,6 +239,11 @@ class Almacen:
         mes = datetime.date.today().strftime("%Y-%m")
         return round(self._q("SELECT coalesce(sum(usd), 0) AS u FROM llamadas WHERE substr(fecha, 1, 7) = ?",
                              (mes,))[0]["u"], 4)
+
+    def gasto_del_dia(self) -> float:
+        hoy = datetime.date.today().isoformat()
+        return round(self._q("SELECT coalesce(sum(usd), 0) AS u FROM llamadas WHERE substr(fecha, 1, 10) = ?",
+                             (hoy,))[0]["u"], 4)
 
     def ultimas_llamadas(self, n: int = 10) -> list:
         return self._q("SELECT * FROM llamadas ORDER BY id DESC LIMIT ?", (n,))

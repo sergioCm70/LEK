@@ -126,3 +126,12 @@ def test_ruido_de_fondo_no_se_responde_en_voz_alta(luna):
     assert luna.atender_voz_de_fondo("mil would en chicago bulls") == ""
     assert "segundo plano" in local.recibido[0]["mensajes"][-1]["content"]
     assert luna.atender_voz_de_fondo("qué hora es") == "Son las tres."
+
+
+def test_ruido_queda_guardado_pero_fuera_del_contexto(luna):
+    local = luna.PROVEEDORES["ollama"]
+    local.respuestas = ["[IGNORAR]", "Hola."]
+    luna.atender_voz_de_fondo("chicago bulls negociación")
+    luna.responder("hola")
+    assert "chicago" not in str(local.recibido[1]["mensajes"])
+    assert luna.ALMACEN._q("SELECT count(*) AS n FROM mensajes WHERE origen = 'ruido'")[0]["n"] == 2

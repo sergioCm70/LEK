@@ -21,6 +21,10 @@ import time
 from pathlib import Path
 
 from . import politica
+from . import aislamiento_windows
+
+# Copia de python.exe con integridad baja (solo Windows): vive en datos/sandbox del proyecto
+CARPETA_SANDBOX = Path(__file__).resolve().parents[2] / "datos" / "sandbox"
 
 MAX_TEXTO = 20_000      # caracteres máximos del resultado
 MAX_EJEMPLOS = 10
@@ -31,6 +35,8 @@ MEMORIA_MAX = 1024 * 1024 * 1024   # 1 GB (solo Linux/Mac)
 _LANZADOR = r'''
 import io, json, sys, time, traceback, contextlib
 marca, ruta_codigo, ruta_args, funcion, memoria = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5])
+if len(sys.argv) > 6:  # librerías del entorno de Luna (requests…) cuando se usa el python base
+    sys.path.extend(p for p in json.loads(sys.argv[6]) if p not in sys.path)
 salida_real = sys.stdout
 try:
     import resource
@@ -121,27 +127,39 @@ def ejecutar_aislado(codigo: str, funcion: str = "ejecutar", argumentos=None, ti
         Path(carpeta, "_lanzador.py").write_text(_LANZADOR, encoding="utf-8")
     except (TypeError, ValueError) as e:
         return fin(False, error=f"Los argumentos no se pueden pasar al subproceso: {e}")
-    comando = [sys.executable, "-I", "-X", "utf8", str(Path(carpeta, "_lanzador.py")), marca,
-               str(Path(carpeta, "habilidad.py")), str(Path(carpeta, "argumentos.json")), funcion, str(MEMORIA_MAX)]
+    import site
+    librerias = [p for p in site.getsitepackages() if Path(p).exists()]
+    comando = [sys.executable, "-I", "-B", "-X", "utf8", str(Path(carpeta, "_lanzador.py")), marca,
+               str(Path(carpeta, "habilidad.py")), str(Path(carpeta, "argumentos.json")), funcion, str(MEMORIA_MAX),
+               json.dumps(librerias)]
     opciones = {"cwd": carpeta, "env": entorno_minimo(carpeta), "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
     if os.name == "nt":
         opciones["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         opciones["start_new_session"] = True  # grupo propio: al vencer el tiempo se matan también sus hijos
+    job = None
     try:
-        proceso = subprocess.Popen(comando, **opciones)
+        if aislamiento_windows.disponible():   # Windows: integridad baja + Job Object (memoria, 1 proceso)
+            proceso, job = aislamiento_windows.lanzar(comando, opciones, CARPETA_SANDBOX)
+        else:
+            proceso = subprocess.Popen(comando, **opciones)
     except OSError as e:
-        return fin(False, error=f"No pude iniciar el subproceso: {e}")
+        return fin(False, error=f"No pude iniciar el subproceso aislado: {e}")
     try:
         salida, errores = proceso.communicate(timeout=tiempo_limite)
     except subprocess.TimeoutExpired:
+        if job:
+            job.cerrar()
         _matar(proceso)
         try:
             proceso.communicate(timeout=5)
         except Exception:
             pass
         return fin(False, error=f"Se pasó del tiempo límite de {tiempo_limite:g} s y la detuve.")
+    finally:
+        if job:
+            job.cerrar()
     texto = salida.decode("utf-8", "replace")
     if marca in texto:
         try:

@@ -23,6 +23,7 @@ except ImportError:
         def get(self, *a, **k):
             return lambda f: f
         post = get
+        middleware = get
 
     class _HTTPException(Exception):
         def __init__(self, status_code=500, detail=""):
@@ -32,6 +33,15 @@ except ImportError:
     fa.FastAPI, fa.Request, fa.HTTPException = _App, object, _HTTPException
     fr = types.ModuleType("fastapi.responses")
     fr.FileResponse = fr.Response = object
+
+    class _JSONResponse:
+        def __init__(self, contenido=None, status_code=200, headers=None):
+            self.contenido, self.status_code, self.headers, self.cookies = contenido, status_code, dict(headers or {}), {}
+
+        def set_cookie(self, clave, valor, **opciones):
+            self.cookies[clave] = (valor, opciones)
+
+    fr.JSONResponse = _JSONResponse
     sys.modules.update({"fastapi": fa, "fastapi.responses": fr})
 
 from lek.cerebros.base import ErrorProveedor, Proveedor, Respuesta  # noqa: E402
@@ -100,9 +110,18 @@ def cargar_luna(carpeta: pathlib.Path):
 
 
 class Peticion:
-    def __init__(self, host="127.0.0.1", pin=""):
-        self.headers = {"x-asistente-pin": pin} if pin else {}
+    def __init__(self, host="127.0.0.1", pin="", sesion="", headers=None, metodo="GET", ruta="/api/ping",
+                 esquema="https"):
+        self.headers = dict(headers or {})
+        if pin:
+            self.headers["x-asistente-pin"] = pin
+        if sesion:
+            self.headers["x-asistente-sesion"] = sesion
+        self.headers.setdefault("host", "localhost:8090")
         self.client = types.SimpleNamespace(host=host)
+        self.cookies = {}
+        self.method = metodo
+        self.url = types.SimpleNamespace(path=ruta, scheme=esquema)
 
 
 def llamada(nombre, argumentos, id_="t1"):

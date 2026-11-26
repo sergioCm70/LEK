@@ -21,7 +21,8 @@ import time
 
 from lek.almacen import ahora
 
-TIPOS = ("codigo", "archivos", "sistema", "salud", "proyecto", "aviso")
+TIPOS = ("codigo", "archivos", "sistema", "salud", "proyecto", "aviso", "seguridad", "error", "aprobacion",
+         "mejora", "diagnostico", "tarea")
 LIMITE_SIN_AGRUPAR = 5        # hasta 5 toasts sueltos del mismo tipo por minuto
 VENTANA_SEGUNDOS = 60.0
 ESPERA_GRUPO = 5.0            # segundos que se espera para juntar el resumen de una ráfaga

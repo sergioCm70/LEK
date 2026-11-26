@@ -3,6 +3,7 @@ cambia al respaldo si algo falla, y registra cada llamada y cada cambio de model
 
 El enrutador automático (fase 2) reemplazará `cadena()` sin cambiar nada más.
 """
+import datetime
 import time
 
 from .base import ErrorProveedor, Respuesta
@@ -75,6 +76,8 @@ class Cerebro:
                 pass
             elif nube and self.almacen.gasto_del_mes() >= cfg["cerebro"]["presupuesto_mensual_usd"]:
                 self._aviso_cadena = "Se alcanzó el presupuesto del mes: uso el cerebro local."
+            elif nube and tope_diario_agotado(self.almacen, cfg):
+                self._aviso_cadena = "Se alcanzó el tope de gasto de hoy: uso el cerebro local hasta mañana."
             elif not self.salud.disponible(principal):
                 pass
             else:
@@ -92,6 +95,26 @@ class Cerebro:
         return opciones
 
     # ---------------------------------------------------------------- llamada
+    avisar = None    # callback(titulo, detalle) para avisos de presupuesto; lo pone el servidor
+
+    def revisar_presupuesto(self) -> None:
+        """Avisa una vez al pasar el 80 % del presupuesto del mes y al agotar el del día."""
+        if not self.avisar:
+            return
+        cfg = self.config.todo()["cerebro"]
+        tope, gasto = float(cfg["presupuesto_mensual_usd"]), self.almacen.gasto_del_mes()
+        mes = datetime.date.today().strftime("%Y-%m")
+        if tope > 0 and gasto >= 0.8 * tope and self.almacen.meta("aviso_80_mes") != mes:
+            self.almacen._fijar("aviso_80_mes", mes)
+            self.avisar("Presupuesto de IA al 80 %", f"Este mes van {gasto:.2f} de {tope:.2f} USD. Al llegar al tope "
+                                                       "Luna sigue con su cerebro local.")
+        dia = float(cfg.get("presupuesto_diario_usd") or 0)
+        hoy = datetime.date.today().isoformat()
+        if dia > 0 and self.almacen.gasto_del_dia() >= dia and self.almacen.meta("aviso_tope_dia") != hoy:
+            self.almacen._fijar("aviso_tope_dia", hoy)
+            self.avisar("Tope de gasto de hoy alcanzado", f"Hoy van {self.almacen.gasto_del_dia():.2f} USD (tope "
+                                                            f"{dia:.2f}). Hasta mañana Luna usa su cerebro local.")
+
     def chat(self, mensajes: list, herramientas: list | None = None, privado: bool = False,
              texto: str = "") -> Respuesta:
         reintentos = self.config.get("salud", "reintentos")
@@ -116,6 +139,8 @@ class Cerebro:
                 self.salud.exito(modelo)
                 self.almacen.registrar_llamada(modelo, info["proveedor"], r.latencia, r.tokens_entrada,
                                                r.tokens_salida, r.usd, ok=True, motivo=motivo)
+                if r.usd:
+                    self.revisar_presupuesto()
                 if modelo != self.ultimo["modelo"]:
                     self.almacen.registrar_cambio_modelo(self.ultimo["modelo"] or "(inicio)", modelo, motivo)
                 degradado = posicion > 0
@@ -163,3 +188,8 @@ class Cerebro:
             "modelos": modelos, "cambios": self.almacen.cambios_modelo(),
             "ultimas_llamadas": self.almacen.ultimas_llamadas(8),
         }
+
+
+def tope_diario_agotado(almacen, cfg: dict) -> bool:
+    dia = float(cfg["cerebro"].get("presupuesto_diario_usd") or 0)
+    return dia > 0 and almacen.gasto_del_dia() >= dia
