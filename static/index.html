@@ -768,6 +768,42 @@ function decir(texto) {
   });
 }
 
+// Voz por frases: mientras la respuesta llega en vivo, cada frase completa se dice en cuanto está lista.
+function hablante() {
+  let dicho = 0, pendientes = 0, avisar = null;
+  const activo = () => $("voz").checked && "speechSynthesis" in window;
+  const hablar = t => {
+    if (!t.trim()) return;
+    const u = new SpeechSynthesisUtterance(t.trim());
+    u.lang = vozES ? vozES.lang : "es-CO"; if (vozES) u.voice = vozES;
+    u.rate = parseFloat(leer("vel") || "1.05"); u.pitch = parseFloat(leer("tono") || "1.05");
+    pendientes++;
+    let hecho = false;
+    const fin = () => { if (hecho) return; hecho = true; pendientes = Math.max(0, pendientes - 1); if (!pendientes && avisar) avisar(); };
+    u.onend = fin; u.onerror = fin; setTimeout(fin, 4000 + t.length * 90);
+    estado("Hablando", "hablando");
+    speechSynthesis.speak(u);
+  };
+  return {
+    // texto = todo lo escrito hasta ahora (limpio). Dice las frases nuevas que ya terminaron.
+    avanzar(texto) {
+      if (!activo()) return;
+      const resto = texto.slice(dicho);
+      const m = resto.match(/^[\s\S]*[.!?¡¿:;\n](?=\s)/);
+      if (m && m[0].trim().length >= 12) { hablar(m[0]); dicho += m[0].length; }
+    },
+    reiniciar() { if (activo()) speechSynthesis.cancel(); dicho = 0; pendientes = 0; },
+    // Final: dice lo que falte. Si el texto final no empieza con lo ya dicho, lo dice entero.
+    terminar(final, escrito) {
+      if (!activo()) return Promise.resolve();
+      if (dicho && final.startsWith(escrito.slice(0, dicho))) hablar(final.slice(dicho));
+      else { speechSynthesis.cancel(); pendientes = 0; hablar(final); }
+      return new Promise(listo => { if (!pendientes) listo(); else avisar = listo; });
+    },
+    usado: () => dicho > 0,
+  };
+}
+
 // ------------------------------------------------------------ oído (escuchar)
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, continuo = false, escuchando = false, ocupado = false;
@@ -859,6 +895,7 @@ async function chatVivo(cuerpo, alEvento, intento = 0) {
 async function detenerTurno() {
   if (!ocupado) return;
   $("detener").disabled = true; estado("Deteniendo…", "pensando");
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
   try { await api("/api/cancelar", { turno: turnoVivo }); } catch (e) {}
 }
 $("detener").onclick = detenerTurno;
@@ -879,6 +916,7 @@ async function enviar(texto, opciones = {}) {
   document.querySelector("button.enviar[type=submit]").hidden = true;
   $("detener").hidden = false; $("detener").disabled = false;
   let enVivo = null, escrito = "";
+  const voz = hablante();
   const alEvento = ev => {
     if (ev.t === "texto") {
       if (!enVivo) {
@@ -889,8 +927,9 @@ async function enviar(texto, opciones = {}) {
       }
       escrito += ev.d; enVivo.textContent = escrito.replace(/[*_#`]+/g, "");
       $("chat").scrollTop = $("chat").scrollHeight;
+      voz.avanzar(enVivo.textContent);
     } else if (ev.t === "reinicio") {
-      escrito = ""; if (enVivo) { enVivo.remove(); enVivo = null; }
+      escrito = ""; voz.reiniciar(); if (enVivo) { enVivo.remove(); enVivo = null; }
     } else if (ev.t === "paso") estado(ev.d + "…", "pensando");
   };
   try {
@@ -901,7 +940,9 @@ async function enviar(texto, opciones = {}) {
     if (enVivo) { enVivo.textContent = d.respuesta; enVivo.classList.remove("vivo"); enVivo.removeAttribute("aria-busy"); }
     else burbuja(d.respuesta, "j");
     if (d.degradado && d.aviso) burbuja("⚠ " + d.aviso, "aviso");
-    await decir(d.respuesta);
+    if (d.detenido) voz.reiniciar();                      // la detuviste: no seguir hablando
+    else if (voz.usado()) await voz.terminar(d.respuesta, escrito.replace(/[*_#`]+/g, ""));
+    else await decir(d.respuesta);
   } catch (e) {
     burbuja("No logro conectarme con el PC. ¿Está encendido el programa?", "j");
     sistema("Sin respuesta del PC", "aviso");

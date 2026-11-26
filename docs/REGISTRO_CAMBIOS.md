@@ -7,6 +7,7 @@
 - **Sin texto fantasma:** si un cerebro falla a mitad de la respuesta y entra el de respaldo, o si la respuesta se corrige (control de afirmaciones), el cliente recibe "reinicio" y se borra lo escrito a medias.
 - **Solo la respuesta al usuario se transmite:** los prompts internos (investigador, resúmenes) nunca salen en vivo.
 - **"Luna, para":** con la escucha en segundo plano, decir "Luna, para" (o detente, cállate, silencio, basta) mientras piensa o habla detiene el pedido y corta el audio. Usa una gramática cerrada de Vosk y exige el nombre primero, para que la TV no la corte. En la ventana, Esc también calla la voz.
+- **Voz por frases:** en la ventana, Luna empieza a hablar en cuanto termina la primera frase, sin esperar la respuesta completa. Si la detienes, deja de hablar.
 - **Herramienta de desarrollo:** `scripts/generar_api_doc.py` regenera `docs/API_LEK.md` (65 rutas).
 - **Pruebas:** 407 → 421.
 
