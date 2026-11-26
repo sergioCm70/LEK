@@ -44,7 +44,7 @@
 | Olvidar invalida y limpia el índice | Aprobada (pruebas) |
 | Conserva el contexto de proyectos (decisiones vs propuestas) | Aprobada (pruebas) |
 | Migración con respaldo previo verificado | **Aprobada en el PC real** |
-| "Trabajemos en Las Delicias" de punta a punta | **Funcionó en el PC** (127 s con el modelo local; el proyecto no quedó activo por un error que ya está corregido) |
+| "Trabajemos en Las Delicias" de punta a punta | **Aprobada en el PC real**: 127 s con el modelo local (y el proyecto no quedó activo por un error, ya corregido); 2,8 s con Claude después de que Sergio permitió `proyectos = nube` (26/11), con el proyecto activo y los mensajes asociados |
 
 ## Pendientes de Sergio
 
@@ -54,7 +54,7 @@
 4. Confirmar si tiene iPhone (necesario para el Apple Watch).
 5. Opcional: `ollama pull nomic-embed-text` para la memoria por significado (unos 274 MB, usa RAM).
 
-6. Decidir si el contexto de proyectos puede ir a Claude (Inteligencia → Privacidad → Proyectos). Solo local: más de 2 minutos por respuesta con la RAM llena.
+6. ~~Privacidad de proyectos~~: Sergio eligió "pueden ir a Claude" (26/11). La memoria personal, las notas y los documentos siguen solo locales.
 
 ## Próximo paso recomendado
 
